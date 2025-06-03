@@ -667,7 +667,7 @@ def auto_u_puti_vikuplenie(df, date_serch):
         _type_: _description_
     """
     try:
-        res = df[(df['дата_оплаты_счета']<=date_serch) & (df['дата_прихода_на_склад'].isna())]['vin'].count()
+        res = df[(df['дата_оплаты_счета']<=date_serch) & ((df['дата_прихода_на_склад'].isna()) | (df['дата_прихода_на_склад']>date_serch))]['vin'].count()
         return int(res)
     except Exception as ex_:
         print(f'ошибка {ex_} функция - {auto_u_puti_vikuplenie.__name__} входяные параметры {date_serch}')
