@@ -1,13 +1,9 @@
 import os
 import time
 script_dir = os.path.dirname(os.path.abspath(__file__)) # привет пути )))
-print(script_dir)
-# time.sleep(3)
-
 # блок логирования
 import logging
 logging.basicConfig(level=logging.INFO, filename=fr"{script_dir}\py_log.log",filemode="w", format="%(asctime)s %(levelname)s %(message)s")
-
 import copy
 import pandas as pd
 # pd.options.display.max_colwidth = 100 # увеличить максимальную ширину столбца
@@ -15,19 +11,14 @@ import pandas as pd
 import datetime as DT
 from datetime import timedelta
 import xlrd
-
-
 import shutil
-
 # блок импортов для обновления сводных
 import pythoncom
 pythoncom.CoInitializeEx(0)
 import win32com.client
 import time
-
 import warnings
 warnings.filterwarnings('ignore')
-
 # блок импорта отправки почты
 import smtplib,ssl
 from email.mime.multipart import MIMEMultipart
