@@ -648,7 +648,8 @@ def auto_na_sclade_consignacia(df, date_serch):
         _type_: _description_
     """
     try:
-        res = df[(df['дата_прихода_на_склад']<=date_serch) & (df['дата_оплаты_счета'].isna())]['vin'].count()
+        res = df[(df['дата_прихода_на_склад']<=date_serch) & 
+                 ((df['дата_оплаты_счета'].isna()) | (df['дата_оплаты_счета']>date_serch)) ]['vin'].count()
         return int(res)
     except Exception as ex_:
         print(f'ошибка {ex_} функция - {auto_na_sclade_consignacia.__name__} входяные параметры {date_serch}')
@@ -923,27 +924,34 @@ def oborotnie_sredstya(df, date_serch, result:str = 'not_demo' or 'not_demo_na_s
             res1 = df[(~df['с_листа'].str.contains('|'.join(unique_name_list_demo()))) & 
                       (df['дата_оплаты_счета']<=date_serch) & 
                       (df['дата_продажи_факт']>date_serch)]['себестоимость_ам'].sum()
+            
             res2 = df[(~df['с_листа'].str.contains('|'.join(unique_name_list_demo()))) & 
                     (df['дата_оплаты_счета']<=date_serch) & 
-                    (~df['дата_продажи_факт'].notna())]['себестоимость_ам'].sum()
+                    (df['дата_продажи_факт'].isna())]['себестоимость_ам'].sum()
             return res1+res2
 
         elif result == 'not_demo_na_sclade':
             res1 = df[(~df['с_листа'].str.contains('|'.join(unique_name_list_demo()))) & 
-                      (df['дата_оплаты_счета']<=date_serch) & 
-                      (df['дата_продажи_факт']>date_serch)& (~df['дата_продажи_факт'].notna())]['себестоимость_ам'].sum()
-            res2 = df[(~df['с_листа'].str.contains('|'.join(unique_name_list_demo()))) & 
-                    (df['дата_оплаты_счета']<=date_serch) & 
-                    (~df['дата_продажи_факт'].notna()) & (~df['дата_продажи_факт'].notna())]['себестоимость_ам'].sum()
-            return res1+res2            
+                      (df['дата_оплаты_счета']<=date_serch) & (df['дата_прихода_на_склад']<=date_serch) 
+                      & ((df['дата_продажи_факт']>date_serch) | (df['дата_продажи_факт'].isna()))]['себестоимость_ам'].sum()
+            
+            # res1 = df[(~df['с_листа'].str.contains('|'.join(unique_name_list_demo()))) & 
+            #           (df['дата_оплаты_счета']<=date_serch) & 
+            #           (df['дата_продажи_факт']>date_serch) & (df['дата_продажи_факт'].isna())]['себестоимость_ам'].sum()
+            
+            # res2 = df[(~df['с_листа'].str.contains('|'.join(unique_name_list_demo()))) & 
+            #         (df['дата_оплаты_счета']<=date_serch) & 
+            #         (df['дата_продажи_факт'].isna())]['себестоимость_ам'].sum()
+            return res1 #+res2            
             
         elif result == 'demo':
             res1 = df[(df['с_листа'].str.contains('|'.join(unique_name_list_demo()))) & 
                       (df['дата_оплаты_счета']<=date_serch) & 
                       (df['дата_продажи_факт']>date_serch)]['себестоимость_ам'].sum()
+            
             res2 = df[(df['с_листа'].str.contains('|'.join(unique_name_list_demo()))) & 
                     (df['дата_оплаты_счета']<=date_serch) & 
-                    (~df['дата_продажи_факт'].notna())]['себестоимость_ам'].sum()
+                    (df['дата_продажи_факт'].isna())]['себестоимость_ам'].sum()
             return res1+res2
 
         else:
@@ -2148,7 +2156,7 @@ class Manufacturing_df_predobrabotka:
         """
         try:
             df_except = copy.deepcopy(self.df_np_auto)
-            df_except['ошибка'] = self.df_np_auto.apply(lambda x: (f'{x.vin} авто выдан {x.дата_выдачи_факт} и не может быть отказа {x.дата_изм} в отказе дб - пусто' 
+            df_except['ошибка'] = self.df_np_auto.apply(lambda x: (f'{x.vin} авто выдан {x.дата_выдачи_факт} и не может быть отказа {x.дата_изм} в отказе дб - пусто / или если авто отказной - не может быть даты выдачи' 
                                                                                  if len(str(x.дата_выдачи_факт))>5 and len(str(x.дата_изм))>5 else None), axis=1)
             df_except = df_except[df_except['ошибка'].notna()]
             df_except = df_except[self.white_list_columns_except_logist]
@@ -2945,6 +2953,15 @@ except Exception as ex_:
     LOG_inf(f'обновление сводной таблицы', 'ERROR', ex_)
     
     
+# обновление сводной таблицы
+LOG_inf(f'обновление сводной таблицы 2', 'INFO')
+try:
+    update_file(links_main(fr"{script_dir}/file_links.txt", "update_file_2"))
+except Exception as ex_:
+    print(ex_)
+    LOG_inf(f'обновление сводной таблицы', 'ERROR', ex_)
+    
+    
 # БЛОК РАССЫЛКИ СООБЩЕНИЙ С ОШИБКАМИ ПО ДАННЫМ
 
 # считываем фрейм с адресами почты и связью файлов для рассылки
@@ -3035,8 +3052,18 @@ except Exception as ex_:
     LOG_inf(f'Пророверка обновления сводной таблицы', 'ERROR', ex_)
     
     
+LOG_inf(f'Пророверка обновления сводной таблицы 2', 'INFO')
+try:
+    test_udate_file_svod_tab = file_update(links_main(fr"{script_dir}/file_links.txt", 'update_file_2')) # получааем метаданные сводной таблицы
+    result_updatefile_true_or_false = test_udate_file_svod_tab>yesterday(1)
+    LOG_inf(f'Метаданные сводной таблицы 2 {test_udate_file_svod_tab} обновлена {result_updatefile_true_or_false}', 'INFO')
+except Exception as ex_:
+    print(ex_)
+    LOG_inf(f'Пророверка обновления сводной таблицы', 'ERROR', ex_)
+    
+    
 # отпрака результатов логирования
-send_mail_2(['skrutko@sim-auto.ru', 'zhurin@sim-auto.ru'], 
+send_mail_2(['skrutko@sim-auto.ru', 'zhurin@sim-auto.ru', 'qwertyz19861@gmail.com'], 
             links_main(fr"{script_dir}/file_links.txt", 'log'), 
             'log.log', 
             them = 'ОБОРОТКА',
