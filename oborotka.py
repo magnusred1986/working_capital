@@ -1,9 +1,13 @@
 import os
 import time
 script_dir = os.path.dirname(os.path.abspath(__file__)) # привет пути )))
+print(script_dir)
+# time.sleep(3)
+
 # блок логирования
 import logging
 logging.basicConfig(level=logging.INFO, filename=fr"{script_dir}\py_log.log",filemode="w", format="%(asctime)s %(levelname)s %(message)s")
+
 import copy
 import pandas as pd
 # pd.options.display.max_colwidth = 100 # увеличить максимальную ширину столбца
@@ -11,14 +15,19 @@ import pandas as pd
 import datetime as DT
 from datetime import timedelta
 import xlrd
+
+
 import shutil
+
 # блок импортов для обновления сводных
 import pythoncom
 pythoncom.CoInitializeEx(0)
 import win32com.client
 import time
+
 import warnings
 warnings.filterwarnings('ignore')
+
 # блок импорта отправки почты
 import smtplib,ssl
 from email.mime.multipart import MIMEMultipart
@@ -758,6 +767,7 @@ def df_oborotka_shablon(year:int, month:int, day:int):
                                     'оборот_средства_без_демо': [0 for i in range(len(kalendar))],
                                     'оборот_средства_без_демо_на_скл': [0 for i in range(len(kalendar))],
                                     'оборот_средства_демо': [0 for i in range(len(kalendar))],
+                                    'себестоимость_накоп_30': [0 for i in range(len(kalendar))],
                                     'проверка': [0 for i in range(len(kalendar))],
                                     })
         return df_oborotka
@@ -1279,6 +1289,47 @@ def yesterday(days:int=1):
         print(f'ошибка функции {return_link_directory.__name__}  {ex_}')
         
         
+def back_days_ago(days_serch, days:int=1):
+    """от поступившей даты отнимает количество дней
+
+    Args:
+        days_serch - входящая дата от которой будем вести отсчет
+        days (int, optional): на сколько дней назад откатываемся по дате. Defaults to 1.
+
+    Returns:
+        _type_: _description_
+    """
+    
+    try:
+        from datetime import datetime, timedelta
+        date = days_serch
+        new_date = date - timedelta(days=days) # вычитание одного дня
+        return new_date
+    except Exception as ex_:
+        print(f'ошибка функции {back_days_ago.__name__}  {ex_}')
+        
+
+def pokazatel_nakopitelno_diapazon_date(df, date_serch, days_back, column_result):
+    """функция рассчета показателя накопительно на текущий день с откатом дней назад
+    дата подяется в Timestamp
+
+    Args:
+        df (_type_): _description_ 
+        date_serch (Timestamp): _description_ - дата поиска 
+        days_back(int) - на сколько дней назад откатить 
+        column_result(str) - колонка по которой считаем показатель накопительно 
+
+    Returns:
+        _type_: _description_
+    """
+    try:
+        res = df[(df['календарь']<=date_serch) 
+                & (df['календарь']>back_days_ago(date_serch, days_back))][column_result].sum()
+        return res
+    except Exception as ex_:
+        print(f'Ошибка функции {pokazatel_nakopitelno_diapazon_date.__name__} {ex_}')
+        
+        
 def sravnenie_arh_skl_k_tek(vin, df_arh, sf_tek):
     try:
         result = []
@@ -1319,7 +1370,7 @@ def update_file(link):
         wb.Application.DisplayAlerts = True  # отображает панель обновления иногда из-за перекрестного открытия предлагает ручной выбор обновления True - показать панель
         wb.RefreshAll()
         #xlapp.CalculateUntilAsyncQueriesDone() # удержит программу и дождется завершения обновления. было прописано time.sleep(30)
-        time.sleep(40) # задержка 60 секунд, чтоб уж точно обновились сводные wb.RefreshAll() - иначе будет ошибка 
+        time.sleep(120) # задержка 60 секунд, чтоб уж точно обновились сводные wb.RefreshAll() - иначе будет ошибка 
         wb.Application.AskToUpdateLinks = True   # запрещает автоматическое  обновление связей / то есть в настройках экселя (ставим галку обратно)
         wb.Save()
         wb.Close()
@@ -1537,6 +1588,64 @@ def exception_result_korrekt(df, column_serch):
         return df
     except Exception as ex_:
         print(f'Ошибка функции {exception_result_korrekt.__name__} {ex_}')
+        
+        
+def last_day_period(df_serch, year_search, month_search, reg, marka, column_search):
+    """получаем результат на дату
+    подается df, год, мес, регион, марка и по этим показателям ищем максимальную дату во врейме
+    получив эту дату - опираясь на этот параметр снова ищем данные уже на конретную дату
+
+    Args:
+        df_serch (_type_): _description_
+        year_search (int): _description_
+        month_search (int): _description_
+        reg (str): _description_
+        marka (str): _description_
+        column_search (str): _description_
+
+    Returns:
+        _type_: _description_
+    """
+    # получаем максимальную дату
+    max_date = df_serch[(df_serch['календарь'].dt.year == year_search) &
+                (df_serch['календарь'].dt.month == month_search) &
+                (df_serch['марка'] == marka) &
+                (df_serch['регион']== reg)]['календарь'].max()
+
+    # получаем результат опираясь на максимальную дату
+    try:
+        res = sum(list(df_serch[(df_serch['календарь'] == max_date) &
+                    (df_serch['марка'] == marka) &
+                    (df_serch['регион']== reg)][column_search]))
+
+        return res
+    except:
+        return 0
+    
+
+def last_day_period_2(df_serch, year_search, month_search, reg, marka, column_search):
+    """получаем сумму столбца по году, месяцу, региону и марке
+
+    Args:
+        df_serch (_type_): _description_
+        year_search (int): _description_
+        month_search (int): _description_
+        reg (str): _description_
+        marka (str): _description_
+        column_search (str): _description_
+
+    Returns:
+        _type_: _description_
+    """
+    try:
+        res = df_serch[(df_serch['календарь'].dt.year == year_search) &
+                    (df_serch['календарь'].dt.month == month_search) &
+                    (df_serch['марка'] == marka) &
+                    (df_serch['регион']== reg)][column_search].sum()
+        return res
+    except:
+        return 0
+    
         
         
 def arhivirovanie(link_directory_copy, link_directory_paste, pattern=''):
@@ -1829,9 +1938,13 @@ for i in df_main.ключ.unique():
         
 if len(catalog_exception_key)>0:
     for i in catalog_exception_key:
-        print(f'Повторная попытка создать объъект класса')
-        print(f'{i}-----------------------------------')
-        catalog_df[i] = Manufacturing_df_sborka(i, df_main[df_main['ключ']==i])
+        try:
+            print(f'Повторная попытка создать объъект класса')
+            print(f'{i}-----------------------------------')
+            catalog_df[i] = Manufacturing_df_sborka(i, df_main[df_main['ключ']==i])
+        except Exception as ex_:
+            print(f'i {ex_}')
+            LOG_inf(f'повторная ошибка {i} будет попытка перезапуска {ex_}', 'ERROR')
         
         
 
@@ -2308,18 +2421,29 @@ class Manufacturing_df_predobrabotka:
             None
     
     
-    ####################
-            
-    
-    def proverka_daty_prihoda(self):
-        """проверяет NP дату прихода на склад - чтоб она была не больше текущей даты
+    def proverka_daty_prihoda(self): ########### 19.06.2025
+        """проверяет NP даты 
+        дата_прихода_на_склад
+        дата_выдачи_факт
+        дата_полной_оплаты_факт
+        дата_справки_счет_факт
+        чтоб они были не больше текущей даты
         """
         from datetime import datetime
         timestamp = datetime.strptime(tek_day(), "%Y-%m-%d")
         try:
-            
             df_except = copy.deepcopy(self.df_np_auto)
-            df_except['ошибка'] = self.df_np_auto.apply(lambda x: (f'{x.vin} Дата прихода на склад {x.дата_прихода_на_склад} больше текущей даты {timestamp}' if x.дата_прихода_на_склад > timestamp else None), axis=1)
+            df_except['ошибка'] = self.df_np_auto.apply(lambda x: (f"{x.vin}" 
+                                                                   f"/ дт_пр_на_скл {x.дата_прихода_на_склад}" 
+                                                                   f"/ дт_выдачи {x.дата_выдачи_факт}" 
+                                                                   f"/ дт_полн_оплаты {x.дата_полной_оплаты_факт}" 
+                                                                   f"/ дт_спр_сч {x.дата_справки_счет_факт}" 
+                                                                   f"/ одна из дат больше текущей даты {timestamp}" 
+                                                                   if x.дата_прихода_на_склад > timestamp 
+                                                                   or x.дата_выдачи_факт > timestamp
+                                                                   or x.дата_полной_оплаты_факт > timestamp
+                                                                   or x.дата_справки_счет_факт > timestamp
+                                                                   else None), axis=1)
             df_except = df_except[df_except['ошибка'].notna()]
             df_except = df_except[self.white_list_columns_except_logist]
             self.except_kum = pd.concat([self.except_kum ,df_except])
@@ -2327,7 +2451,6 @@ class Manufacturing_df_predobrabotka:
             print(f'{self.name_object_class} ошибка {ex_} функция - {self.proverka_daty_prihoda.__name__}')
             None
             
-
 
     def proverka_date_oplaty_na_min_date_prihoda(self):
         
@@ -2411,6 +2534,22 @@ class Manufacturing_df_predobrabotka:
             print(f'{self.name_object_class} ошибка {ex_} функция - {self.proverka_ceny_prodajy_i_daty_prodajy.__name__}')
             None   
 
+    def proverka_daty_prodajy_i_nalichie_ceny_prodajy(self): ## 18.05.2025
+        """если есть дата_продажи_факт но нет цена_продажи
+        реагирует на все кроме комиссионных авто ОВП
+        """
+        try:
+            df_except = copy.deepcopy(self.df_sclad)
+            df_except['ошибка'] = self.df_sclad.apply(lambda x: (f'{x.vin} дата продажи {x.дата_продажи_факт} нет цены продажи {x.цена_продажи}' 
+                                                                if (len(str(x.дата_продажи_факт))>5 and 'nan' in str(x.цена_продажи) if 'комиссия' not in (x.вид_поставки) else None) # если не комиссия в виде поставики тогда проверяем на условия
+                                                                or (len(str(x.дата_продажи_факт))>5 and float(x.цена_продажи)<=0 if 'комиссия' not in (x.вид_поставки) else None)  # если не комиссия в виде поставики тогда проверяем на условия
+                                                                else None), axis=1)
+            df_except = df_except[df_except['ошибка'].notna()]
+            df_except = df_except[self.white_list_columns_except_logist]
+            self.except_kum = pd.concat([self.except_kum ,df_except])
+        except Exception as ex_:
+            print(f'{self.name_object_class} ошибка {ex_} функция - {self.proverka_daty_prodajy_i_nalichie_ceny_prodajy.__name__}')
+            None   
     
     # ПОЗЖЕ УДАЛИТЬ причастные функции
     
@@ -2497,7 +2636,6 @@ class Manufacturing_df_predobrabotka:
             self.pravka_otkaza()
             self.proverka_otkaza_arhiva()
             self.pravka_otkaza_arhiva()
-            # self.proverka_daty_prihoda_mejdy_sclad_i_np()
             self.proverka_sklada_na_daty_oplaty_i_ceny_prodajy()
             self.proverka_daty_oplaty()
             self.proverka_date_oplaty_na_min_date_prihoda()
@@ -2516,6 +2654,7 @@ class Manufacturing_df_predobrabotka:
             self.proverka_daty_contrakta_na_skale()
             self.proverka_daty_prodajy_na_skale()
             self.except_column_korrekt()
+            self.proverka_daty_prodajy_i_nalichie_ceny_prodajy()
             
         if self.save_excel:
         # запуск завершающих функций
@@ -2760,18 +2899,14 @@ class Manufacturing_df_oborotka:
                 self.df_oborotka = protajka_stolbcov_v_arhivnoy_oborotke(self.df_oborotka)
             except Exception as ex_:
                 print(f'{self.name_object_class} ошибка {ex_} функция - {self.update_arhiv_oborotka_17.__name__}')
+    
+    def vidachy_sebestoimost_nakopitelno_18(self):
+        if self.update_oborotka==True:
+            try:
+                self.df_oborotka['себестоимость_накоп_30'] = self.df_oborotka.apply(lambda x: pokazatel_nakopitelno_diapazon_date(self.df_oborotka, x.календарь, 30, 'выдачи_себестоимость'), axis=1)
+            except Exception as ex_:
+                print(f'{self.name_object_class} ошибка {ex_} функция - {self.vidachy_sebestoimost_nakopitelno_18.__name__}')       
             
-            
-    # def bonus_park_18(self):
-    #     """цепляет бонусы из ПАРКА
-    #     """
-    #     try:
-    #         self.df_oborotka['бонус'] = self.df_oborotka.apply(lambda x: (bonus_park(x.календарь, convertor_brands_in_PARK(x.марка, x.регион)[0], convertor_brands_in_PARK(x.марка, x.регион)[1], 'Доход, руб.') if x.календарь.day == 1 else None), axis=1)
-            
-    #     except Exception as ex_:
-    #         print(f'{self.name_object_class} ошибка {ex_} функция - {self.bonus_park_18.__name__}')
-        
-        
     def save_object_class_excel(self):
         
         """функция сохранения промежуточного объекта класса с тремя собранными фреймами ОПЛАТА, АВТО, СКЛАД
@@ -2825,6 +2960,7 @@ class Manufacturing_df_oborotka:
             self.dop_informaciva_15()
             self.region_marka_16()
             self.update_arhiv_oborotka_17()
+            self.vidachy_sebestoimost_nakopitelno_18()
 
             self.save_object_class_excel()
             self.save_object_class_excel_exception()
@@ -2902,6 +3038,86 @@ for i in catalog_df_predobrabotka.keys():
 
 # обрезаем лишнее
 result_svod = result_svod.dropna(subset=['марка', 'регион']) 
+result_svod = result_svod[result_svod['календарь']>=KOSTRACIVA]
+
+# БЛОК СРЕДНИЙ СКЛАД
+LOG_inf(f'запуск расчета среднего склада', 'INFO')
+try:
+    result_svod_copy = copy.deepcopy(result_svod)
+    result_svod_copy_sr_sklad = result_svod_copy[(result_svod_copy['календарь'] <= yesterday())]
+    result_svod_copy_sr_sklad.tail(35)
+    result_svod_copy_sr_sklad['ср_склад_авто'] = result_svod_copy_sr_sklad['ам_на_складе_клиент'] + result_svod_copy_sr_sklad['ам_на_складе_своб'] + result_svod_copy_sr_sklad['ам_в_пути_выкуп'] - result_svod_copy_sr_sklad['склад_конс_ам']
+    result_svod_copy_sr_sklad = result_svod_copy_sr_sklad.pivot_table(index=['регион','марка', result_svod_copy_sr_sklad['календарь'].apply(lambda x: x.replace(day=1))], 
+                                values=['оборот_средства_без_демо', 'выдачи_всего',"ср_склад_авто"], 
+                                columns=[], 
+                                aggfunc={'оборот_средства_без_демо':'mean', 'выдачи_всего':'sum',"ср_склад_авто":'mean'}).reset_index()
+except Exception as ex_:
+    print(ex_)
+    LOG_inf(f'запуск расчета среднего склада', 'ERROR', ex_)
+    
+    
+# БЛОК КРАТКОЙ ОБОРОТКИ
+# сделать оборотку кратко как в оборотке лист КРАТКО
+LOG_inf(f'запуск расчета краткой оборотки', 'INFO')
+try:
+    oborotka_nakopitrlno = result_svod_copy[(result_svod_copy['календарь'] <= yesterday())]
+    oborotka_nakopitrlno['месяц'] = oborotka_nakopitrlno['календарь'].dt.month
+    oborotka_nakopitrlno['год'] = oborotka_nakopitrlno['календарь'].dt.year
+    # все группируем
+    not_columns = ['календарь', 'имя_объекта', 'марка',	'регион', 'месяц', 'год']
+    oborotka_nak = oborotka_nakopitrlno.groupby(['год','месяц','марка', 'регион'])[[i for i in oborotka_nakopitrlno.columns if i not in not_columns]].agg('sum')
+    oborotka_nak = oborotka_nak.reset_index()
+
+    oborotka_nak['всего_заказов'] = oborotka_nak['зкз_кред'] + oborotka_nak['зкз_нал']
+    oborotka_nak['всего_отказов'] = oborotka_nak['откз_кред'] + oborotka_nak['откз_нал']
+    oborotka_nak['доход'] = oborotka_nak['выдачи_выручка'] - oborotka_nak['выдачи_себестоимость']
+    oborotka_nak['приход_ам_всего'] = oborotka_nak['приход_ам_своб'] + oborotka_nak['приход_ам_клиент']
+    oborotka_nak = oborotka_nak.drop(['зкз_путь_кред', 'зкз_склад_кред', 'зкз_путь_нал',
+                                    'зкз_склад_нал','зкз_кред',	'зкз_нал',	'откз_кред',
+                                    'откз_нал',	'всего_зкз_с_уч_откз_и_выд_кред',
+                                    'всего_зкз_с_уч_откз_и_выд_нал','всего_зкз_с_уч_откз_и_выд_всего', 
+                                    'выдачи_кред', 'выдачи_нал'], axis=1)
+
+    # спсиок нужных столбцов
+    white_list_column = ['год',	'месяц','марка', 'регион', 'всего_заказов', 'всего_отказов', 'выдачи_всего', 'выдачи_выручка', 
+                        'доход', 'оплаты', 'платежи_ам_свободн_шт', 'платежи_ам_свободн_руб', 'платежи_ам_всего_шт', 
+                        'платежи_ам_всего_руб', 'приход_ам_своб', 'приход_ам_всего']
+
+    oborotka_nak = oborotka_nak[white_list_column]
+    oborotka_nak['клиентские_ам'] = oborotka_nak.apply(lambda x: last_day_period(result_svod_copy, x.год, x.месяц, x.регион, x.марка, 'ам_на_складе_клиент') , axis=1)
+    
+    oborotka_nak['своб_ам_без_дем_и_консиг'] = oborotka_nak.apply(lambda x: last_day_period(result_svod_copy, x.год, x.месяц, x.регион, x.марка, 'ам_на_складе_своб') 
+                                                        - last_day_period(result_svod_copy, x.год, x.месяц, x.регион, x.марка, 'склад_в_тч_демо_ам')
+                                                        - last_day_period(result_svod_copy, x.год, x.месяц, x.регион, x.марка, 'склад_конс_ам'), axis=1)
+    
+    oborotka_nak['конс_авто'] = oborotka_nak.apply(lambda x: last_day_period(result_svod_copy, x.год, x.месяц, x.регион, x.марка, 'склад_конс_ам'), axis=1)
+    oborotka_nak['обор_срва_всего_без_демо'] = oborotka_nak.apply(lambda x: last_day_period(result_svod_copy, x.год, x.месяц, x.регион, x.марка, 'оборот_средства_без_демо'), axis=1)
+    oborotka_nak['обор_срва_на_складе_без_демо'] = oborotka_nak.apply(lambda x: last_day_period(result_svod_copy, x.год, x.месяц, x.регион, x.марка, 'оборот_средства_без_демо_на_скл'), axis=1)
+    oborotka_nak['бонус'] = oborotka_nak.apply(lambda x: last_day_period_2(result_svod_copy, x.год, x.месяц, x.регион, x.марка, 'Бонус'), axis=1)
+    oborotka_nak['план'] = oborotka_nak.apply(lambda x: last_day_period_2(result_svod_copy, x.год, x.месяц, x.регион, x.марка, 'ПЛН'), axis=1)
+    oborotka_nak['дата'] = oborotka_nak.apply(lambda x: (f'{x.год}-{x.месяц}-01'), axis=1)
+    oborotka_nak['дата'] = pd.to_datetime(oborotka_nak['дата'])
+    oborotka_nak = oborotka_nak.drop(['год', 'месяц'], axis=1)
+except Exception as ex_:
+    print(ex_)
+    LOG_inf(f'запуск расчета краткой оборотки', 'ERROR', ex_)
+    
+
+# сохраняем средний склад
+LOG_inf(f'сохраняем средний склад', 'INFO')
+try:
+    result_svod_copy_sr_sklad.to_excel(links_main("file_links.txt", "result_svod_copy_sr_sklad"))
+except Exception as ex_:
+    print(ex_)
+    LOG_inf(f'сохраняем средний склад', 'ERROR', ex_)
+    
+# сохраняем оборотку накопительно
+LOG_inf(f'сохраняем оборотку накопительно', 'INFO')
+try:
+    oborotka_nak.to_excel(links_main("file_links.txt", "oborotka_nakopitelno"))
+except Exception as ex_:
+    print(ex_)
+    LOG_inf(f'сохраняем оборотку накопительно', 'ERROR', ex_)
 
 # сохраняем оборотку
 LOG_inf(f'сохраняем оборотку', 'INFO')
@@ -2932,7 +3148,7 @@ try:
     result_np_auto.to_excel(links_main(fr"{script_dir}/file_links.txt", "save_sborka_np_auto"))
 except Exception as ex_:
     print(ex_)
-    LOG_inf(f'сохраняем оборотку', 'ERROR', ex_)
+    LOG_inf(f'собираем и сохраняем склады и np c новыми ключами и сохраняем, нужно Ж.Р.А.', 'ERROR', ex_)
     
     
 # обновление сводной таблицы
@@ -2950,7 +3166,7 @@ try:
     update_file(links_main(fr"{script_dir}/file_links.txt", "update_file_2"))
 except Exception as ex_:
     print(ex_)
-    LOG_inf(f'обновление сводной таблицы', 'ERROR', ex_)
+    LOG_inf(f'обновление сводной таблицы 2', 'ERROR', ex_)
     
     
 # БЛОК РАССЫЛКИ СООБЩЕНИЙ С ОШИБКАМИ ПО ДАННЫМ
@@ -2982,10 +3198,14 @@ try:
             df = pd.read_excel(link)                                            # считываем фрейм
             count_srok = df.shape[0]                                            # считываем параметры табл строки/столб
             if count_srok>=1:                                                   # если строк больше 1
-                print(email_adress_go, link, name)
-                LOG_inf(f'{email_adress_go, link, name}', 'INFO')
-                send_mail(email_adress_go, link, name)                          # отправляем почту
-                time.sleep(pause_sleep)                                         # без задержки вылетает ошибка отправки почты менее 15 сек
+                try:
+                    print(email_adress_go, link, name)
+                    LOG_inf(f'{email_adress_go, link, name}', 'INFO')
+                    send_mail(email_adress_go, link, name)                          # отправляем почту
+                    time.sleep(pause_sleep)                                         # без задержки вылетает ошибка отправки почты менее 15 сек
+                except Exception as ex_:
+                    print(f'ошибка рассылки сообщений {ex_} параметры {email_adress_go, link, name}')
+                    LOG_inf(f'рассылаем сообщения с ошибками {email_adress_go, link, name}', 'ERROR', ex_)
 
 except Exception as ex_:
     print(ex_)
@@ -3032,7 +3252,6 @@ except Exception as ex_:
     print(ex_)
     LOG_inf(f'сборка результатов сравнения склада архивного и текущего', 'ERROR', ex_)  
     
-    
 LOG_inf(f'Пророверка обновления сводной таблицы', 'INFO')
 try:
     test_udate_file_svod_tab = file_update(links_main(fr"{script_dir}/file_links.txt", 'update_file')) # получааем метаданные сводной таблицы
@@ -3050,8 +3269,7 @@ try:
     LOG_inf(f'Метаданные сводной таблицы 2 {test_udate_file_svod_tab} обновлена {result_updatefile_true_or_false}', 'INFO')
 except Exception as ex_:
     print(ex_)
-    LOG_inf(f'Пророверка обновления сводной таблицы', 'ERROR', ex_)
-    
+    LOG_inf(f'Пророверка обновления сводной таблицы 2', 'ERROR', ex_)
     
 # отпрака результатов логирования
 send_mail_2(['skrutko@sim-auto.ru', 'zhurin@sim-auto.ru', 'qwertyz19861@gmail.com'], 
