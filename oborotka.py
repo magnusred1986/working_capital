@@ -18,6 +18,7 @@ import xlrd
 
 
 import shutil
+import subprocess
 
 # блок импортов для обновления сводных
 import pythoncom
@@ -1646,8 +1647,34 @@ def last_day_period_2(df_serch, year_search, month_search, reg, marka, column_se
     except:
         return 0
     
-        
-        
+def run_subbrocess_temp():
+    """запуск скрипта темпа после обратки первого класса
+    """
+    try:
+        process_1 = subprocess.Popen(['py', links_main(fr"{script_dir}/file_links.txt", "run_temp")]) # запуск скрипта 
+        process_1.wait()
+    except Exception as ex_:
+        print(f'ошибка функции {run_subbrocess_temp.__name__} {ex_}')
+        LOG_inf(f'ошибка функции {run_subbrocess_temp.__name__}', 'ERROR', ex_)
+
+def date_prihoda_na_scl_np_po_skl(df, vin:str):
+    """подтягивает данные по vin из склада
+    позвращает все даты прихода в lst
+
+    Args:
+        df (dataframe): _description_
+        vin (srt): _description_
+
+    Returns:
+        list: _description_
+    """
+    try:
+        res = list(df[df['vin']==vin]['дата_прихода_на_склад'])
+        return res
+    except Exception as ex_:
+        print(f'ошибка функции {date_prihoda_na_scl_np_po_skl.__name__} {ex_} входные данные {vin}')
+        LOG_inf(f'ошибка функции {date_prihoda_na_scl_np_po_skl.__name__}', 'ERROR', ex_)
+                 
 def arhivirovanie(link_directory_copy, link_directory_paste, pattern=''):
     """для копирования файлов из одной директории в другую
     import os
@@ -2094,6 +2121,23 @@ except Exception as ex_:
     LOG_inf(f'ошибка {ex_} не удалось разделить МАЗДУ МСК на МАЗДУ И NEXT', 'ERROR')
     
     
+LOG_inf(f'сохраняем сборку NP 1 класса для ТЕМПА', 'INFO')
+try:
+    temp_file = pd.concat([catalog_df[i].df_np_auto for i in catalog_df.keys()])
+    temp_file.to_excel(links_main(fr"{script_dir}/file_links.txt", "save_temp"))
+except Exception as ex_:
+    print(f'ошибка {ex_} не удалось сохранить сборку NP 1 класса для ТЕМПА')
+    LOG_inf(f'ошибка {ex_} не удалось сохранить сборку NP 1 класса для ТЕМПА', 'ERROR')
+    
+
+LOG_inf(f'запускаем субпроцесс по обработке NP 1 класса для ТЕМПА', 'INFO')
+try:
+    run_subbrocess_temp()
+except Exception as ex_:
+    print(f'ошибка {ex_} не удалось запустить  субпроцесс по обработке NP 1 класса для ТЕМПА')
+    LOG_inf(f'ошибка {ex_} не удалось запустить  субпроцесс по обработке NP 1 класса для ТЕМПА', 'ERROR')
+
+
 
 class Manufacturing_df_predobrabotka:
     def __init__(self, manufacturing_df_sborka, name_Manufacturing_df_sborka, starter:True or False = None, save_excel: True or False = None):
@@ -2200,6 +2244,23 @@ class Manufacturing_df_predobrabotka:
             self.df_np_oplata, self.df_np_auto, self.df_sclad = numeric_columns_convertor(self.df_np_oplata), numeric_columns_convertor(self.df_np_auto), numeric_columns_convertor(self.df_sclad)
         except Exception as ex_:
             print(f'ошибка функции {self.pravka_type_dataframe.__name__}')
+
+
+    def poverka_date_prihoda_np_po_sl(self):    # 10.07.2025 
+        """если в NP есть дата прихода на склад - то сравниваем ее
+        с датой прихода на склад в файле склад
+        """
+        try:
+            df_except = copy.deepcopy(self.df_np_auto)
+            df_except['ошибка'] = df_except.apply(lambda x: (f'{x.vin} дата прихода в NP {x.дата_прихода_на_склад} не соответствует SKL {date_prihoda_na_scl_np_po_skl(self.df_sclad, x.vin)}' 
+                                                             if (len(str(x.дата_прихода_на_склад))>5 and str(x.vin) in list(self.df_sclad['vin']))
+                                                             and x.дата_прихода_на_склад not in date_prihoda_na_scl_np_po_skl(self.df_sclad, x.vin) 
+                                                             and len(str(x.дата_изм))<=6 else None), axis=1)
+            df_except = df_except[df_except['ошибка'].notna()]
+            df_except = df_except[self.white_list_columns_except_logist]
+            self.except_kum = pd.concat([self.except_kum ,df_except])
+        except:
+            print(f'ошибка функции {self.poverka_date_prihoda_np_po_sl.__name__}')  
             
     
     def kostraciva_po_date(self):
@@ -2421,8 +2482,9 @@ class Manufacturing_df_predobrabotka:
             None
     
     
-    def proverka_daty_prihoda(self): ########### 19.06.2025
+    def proverka_dat_v_np_na_previchenie(self): ########### 27.06.2025
         """проверяет NP даты 
+        дата изм/отказа
         дата_прихода_на_склад
         дата_выдачи_факт
         дата_полной_оплаты_факт
@@ -2434,6 +2496,7 @@ class Manufacturing_df_predobrabotka:
         try:
             df_except = copy.deepcopy(self.df_np_auto)
             df_except['ошибка'] = self.df_np_auto.apply(lambda x: (f"{x.vin}" 
+                                                                   f"/ дт_отказа {x.дата_изм}" 
                                                                    f"/ дт_пр_на_скл {x.дата_прихода_на_склад}" 
                                                                    f"/ дт_выдачи {x.дата_выдачи_факт}" 
                                                                    f"/ дт_полн_оплаты {x.дата_полной_оплаты_факт}" 
@@ -2443,13 +2506,16 @@ class Manufacturing_df_predobrabotka:
                                                                    or x.дата_выдачи_факт > timestamp
                                                                    or x.дата_полной_оплаты_факт > timestamp
                                                                    or x.дата_справки_счет_факт > timestamp
+                                                                   or x.дата_изм > timestamp
                                                                    else None), axis=1)
+            
             df_except = df_except[df_except['ошибка'].notna()]
             df_except = df_except[self.white_list_columns_except_logist]
             self.except_kum = pd.concat([self.except_kum ,df_except])
         except Exception as ex_:
-            print(f'{self.name_object_class} ошибка {ex_} функция - {self.proverka_daty_prihoda.__name__}')
+            print(f'{self.name_object_class} ошибка {ex_} функция - {self.proverka_dat_v_np_na_previchenie.__name__}')
             None
+            
             
 
     def proverka_date_oplaty_na_min_date_prihoda(self):
@@ -2520,13 +2586,19 @@ class Manufacturing_df_predobrabotka:
             print(f'{self.name_object_class} ошибка {ex_} функция - {self.proverka_spravki_schet_i_vidachy.__name__}')
             None   
             
-    def proverka_ceny_prodajy_i_daty_prodajy(self):
-        """если есть цена_продажи но нет дата_продажи_факт
+    def proverka_ceny_prodajy_i_daty_prodajy(self): # скорректировано 11.07.2025
+        """если есть цена_продажи (дата прихода на склад или дата контракта) и данные с листа АРХИВ но нет даты продажи
+        ДОПИСАТЬ ПОЯСНЕНИЕ
         """
         try:
             df_except = copy.deepcopy(self.df_sclad)
             df_except['ошибка'] = self.df_sclad.apply(lambda x: (f'{x.vin} цена продажи {x.цена_продажи} нет даты продажи {x.дата_продажи_факт}' 
-                                                                if float(x.цена_продажи)>0 and (len(str(x.дата_продажи_факт))<5 if 'NaT' not in str(x.дата_продажи_факт) else True)  else None), axis=1)
+                                                                if float(x.цена_продажи)>0
+                                                                and len(x.vin)>10
+                                                                and (len(str(x.дата_прихода_на_склад))>5 or len(str(x.дата_контракта_заказа))>5)
+                                                                and "АРХИВ" in str(x.с_листа)
+                                                                and len(str(x.дата_продажи_факт))<5 
+                                                                else None), axis=1)
             df_except = df_except[df_except['ошибка'].notna()]
             df_except = df_except[self.white_list_columns_except_logist]
             self.except_kum = pd.concat([self.except_kum ,df_except])
@@ -2629,6 +2701,7 @@ class Manufacturing_df_predobrabotka:
             self.individual_pravka_statvs_zakaza_OVP()
             self.korrektirovka()
             self.pravka_type_dataframe()
+            self.poverka_date_prihoda_np_po_sl() # 10.07.2025
             self.kostraciva_po_date()          
             self.proverka_np_date()
             self.pravka_formy_oplaty()
@@ -2645,7 +2718,7 @@ class Manufacturing_df_predobrabotka:
             self.proverka_vidachy_i_spravki_schet()
             self.proverka_ceny_prodajy_i_daty_prodajy()
             self.pravka_spravki_schet_i_vidachy()
-            self.proverka_daty_prihoda()
+            self.proverka_dat_v_np_na_previchenie()
             self.individual_statvs_zakaza_VARSH_BAIK_UKA_HYUNDAI()
             self.idividual_prauka_KIA_varsh_status_sklad()
             self.statys_zakaza_nan_()
@@ -2907,6 +2980,16 @@ class Manufacturing_df_oborotka:
             except Exception as ex_:
                 print(f'{self.name_object_class} ошибка {ex_} функция - {self.vidachy_sebestoimost_nakopitelno_18.__name__}')       
             
+    # def bonus_park_18(self):
+    #     """цепляет бонусы из ПАРКА
+    #     """
+    #     try:
+    #         self.df_oborotka['бонус'] = self.df_oborotka.apply(lambda x: (bonus_park(x.календарь, convertor_brands_in_PARK(x.марка, x.регион)[0], convertor_brands_in_PARK(x.марка, x.регион)[1], 'Доход, руб.') if x.календарь.day == 1 else None), axis=1)
+            
+    #     except Exception as ex_:
+    #         print(f'{self.name_object_class} ошибка {ex_} функция - {self.bonus_park_18.__name__}')
+        
+        
     def save_object_class_excel(self):
         
         """функция сохранения промежуточного объекта класса с тремя собранными фреймами ОПЛАТА, АВТО, СКЛАД
@@ -3106,7 +3189,7 @@ except Exception as ex_:
 # сохраняем средний склад
 LOG_inf(f'сохраняем средний склад', 'INFO')
 try:
-    result_svod_copy_sr_sklad.to_excel(links_main("file_links.txt", "result_svod_copy_sr_sklad"))
+    result_svod_copy_sr_sklad.to_excel(links_main(fr"{script_dir}/file_links.txt", "result_svod_copy_sr_sklad"))
 except Exception as ex_:
     print(ex_)
     LOG_inf(f'сохраняем средний склад', 'ERROR', ex_)
@@ -3114,7 +3197,7 @@ except Exception as ex_:
 # сохраняем оборотку накопительно
 LOG_inf(f'сохраняем оборотку накопительно', 'INFO')
 try:
-    oborotka_nak.to_excel(links_main("file_links.txt", "oborotka_nakopitelno"))
+    oborotka_nak.to_excel(links_main(fr"{script_dir}/file_links.txt", "oborotka_nakopitelno"))
 except Exception as ex_:
     print(ex_)
     LOG_inf(f'сохраняем оборотку накопительно', 'ERROR', ex_)
@@ -3252,6 +3335,7 @@ except Exception as ex_:
     print(ex_)
     LOG_inf(f'сборка результатов сравнения склада архивного и текущего', 'ERROR', ex_)  
     
+    
 LOG_inf(f'Пророверка обновления сводной таблицы', 'INFO')
 try:
     test_udate_file_svod_tab = file_update(links_main(fr"{script_dir}/file_links.txt", 'update_file')) # получааем метаданные сводной таблицы
@@ -3270,6 +3354,7 @@ try:
 except Exception as ex_:
     print(ex_)
     LOG_inf(f'Пророверка обновления сводной таблицы 2', 'ERROR', ex_)
+    
     
 # отпрака результатов логирования
 send_mail_2(['skrutko@sim-auto.ru', 'zhurin@sim-auto.ru', 'qwertyz19861@gmail.com'], 
