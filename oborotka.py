@@ -1,31 +1,11 @@
-import os
-import time
-script_dir = os.path.dirname(os.path.abspath(__file__)) # привет пути )))
-print(script_dir)
-# time.sleep(3)
-
-# блок логирования
-import logging
-logging.basicConfig(level=logging.INFO, filename=fr"{script_dir}\py_log.log",filemode="w", format="%(asctime)s %(levelname)s %(message)s")
-
-import copy
+import subprocess, copy, xlrd, os, shutil, socket, time, win32com.client, sqlalchemy, xlsxwriter, datetime
 import pandas as pd
-# pd.options.display.max_colwidth = 100 # увеличить максимальную ширину столбца
-# pd.set_option('display.max_columns', None) # макс кол-во отображ столбц
-import datetime as DT
+import numpy as np
+from functools import wraps
 from datetime import timedelta
-import xlrd
-
-
-import shutil
-import subprocess
-
 # блок импортов для обновления сводных
 import pythoncom
 pythoncom.CoInitializeEx(0)
-import win32com.client
-import time
-
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -37,17 +17,24 @@ from email.mime.text import MIMEText
 from email.utils import formatdate
 from email import encoders
 
+import threading
+# блок логирования
+import logging
 
-def LOG_inf(name, type_='INFO' or 'ERROR', *args):
+def dir_link():
+    """возвращает абсолютный путь
+    """
+    import os
     try:
-        if type_ == 'INFO': logging.info(f"{name} {args}")
-        elif type_ == 'ERROR': logging.error(f"{name} {args}")
-    except Exception as ex_:
-        print(f'Х_НЯ с логированием {ex_}')
-      
-        
-from functools import wraps
-import time
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        return script_dir
+    except:
+        script_dir_2 = os.getcwd()
+        return script_dir_2
+DIR = dir_link()
+
+
+
 # декоратор для times-повторного выполнения функции при неудачном выполнении 
 def retry(times, sec_):
     """_summary_
@@ -71,6 +58,33 @@ def retry(times, sec_):
     return wrapper_fn
 
 
+# === НАСТРОЙКА ЛОГИРОВАНИЯ С ПЕРЕЗАПИСЬЮ ===
+LOG_FILE = os.path.join(DIR, "log_oborotka.log")
+
+# Удаляем старый лог, если он существует
+if os.path.exists(LOG_FILE):
+    try:
+        os.remove(LOG_FILE)
+        print(f"🗑️ Старый лог удалён: {LOG_FILE}")
+    except PermissionError:
+        print(f"❌ Не удалось удалить старый лог: возможно, файл открыт в другом приложении")
+    except Exception as e:
+        print(f"❌ Ошибка при удалении лога: {e}")
+
+# Теперь настраиваем логирование — файл будет создан заново
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)-8s | %(message)s",
+    handlers=[
+        logging.FileHandler(LOG_FILE, encoding="utf-8"),  # Создастся как новый
+        logging.StreamHandler()  # вывод в консоль
+    ]
+)
+
+logger = logging.getLogger(__name__)
+logger.info("Запуск скрипта ОБОРОТКИ")
+
+
 @retry(10, 5)
 def links_main(name_file, key):
     """функция для работы с путями, ссылки, вводные данные хранятся в блокноте
@@ -87,45 +101,250 @@ def links_main(name_file, key):
         result = list(file[file['ключ']==key]['значение'])[0]
         return result
     except Exception as ex_:
-        print(f'ошибка функции {links_main.__name__} не удалось считать файл {name_file} или данные в нем {key} ошибка {ex_}')
-        
-        
+        logger.error(f'ошибка функции {links_main.__name__} не удалось считать файл {name_file} или данные в нем {key} ошибка {ex_}')
+
+
 def file_update(link):
-    
     "возвращает дату последнего обновления файла"
     try:
         from datetime import datetime, date, timedelta
         res = datetime.fromtimestamp(os.path.getmtime(link))
         return res
     except Exception as ex_:
-        print(f'ошибка функции {file_update.__name__} не удалось считать метаданные файла {link} ошибка {ex_}')
-        
-        
-KOSTRACIVA = '2023-01-01' # дата до которой все обрезаем
-LOG_inf(f'Дата по которую все обрезаем ', 'INFO', KOSTRACIVA)
-PARK = pd.read_excel(links_main(fr"{script_dir}/file_links.txt", "park"), sheet_name='БД')
-PARK['мес'] = PARK['мес'].fillna(0).apply(lambda x: xlrd.xldate_as_datetime(x, 0))
-PARK = PARK[['мес', 'Подразделение/площадка', 'ТИП', 'Марка', 'Бонус', 'Доход, руб.']]
-CONNECTION_BRAND_PARK = pd.read_excel(links_main(fr"{script_dir}/file_links.txt", "conenection_brand"), sheet_name='PARK')
-CONNECTION_BRAND_PLAN_AUTO = pd.read_excel(links_main(fr"{script_dir}/file_links.txt", "conenection_brand"), sheet_name='PLAN_AUTO')
-PLAN_AUTO = pd.read_excel(links_main(fr"{script_dir}/file_links.txt", "plan_auto"), sheet_name='auto')
-SERVER = links_main(fr"{script_dir}/file_links.txt", "server")
-PORT = int(links_main(fr"{script_dir}/file_links.txt", "port"))
-USER_NAME = links_main(fr"{script_dir}/file_links.txt", "username")
-SEND_FROM = links_main(fr"{script_dir}/file_links.txt", "send_from")
+        logger.error(f'ошибка функции {file_update.__name__} не удалось считать метаданные файла {link} ошибка {ex_}')
 
 
-df_main = pd.read_excel(links_main(fr"{script_dir}/file_links.txt", 'read_file_main'), sheet_name='Sheet1')
-df_main['date_update'] = df_main['ссылка'].apply(lambda x: file_update(fr'{x}'))
-df_main['date_update'] = df_main['date_update'].apply(lambda x: str(x).split(' ')[0])
-df_main['date_update'] = pd.to_datetime(df_main['date_update'] )
+def get_data_user_param(socket_name=True):
+    """возврат данных пользователя по соккету (имени ПК) для отправки почты в формате кортежа
+    name_pc server port username send_from password
 
-for i in df_main.ключ.unique():
-    print(i)
+    Args:
+        socket_name (bool, optional): _description_. Defaults to True.
+
+    Returns:
+        _type_: _description_
+    """
     try:
-        print(df_main[df_main['ключ']==i])
-    except Exception as ex_:
-        print(f'{i} ошибка {ex_}')
+        df = pd.read_excel(links_main(fr"{DIR}\file_links.txt", "pass_all"),engine='calamine',sheet_name='PC')
+        if len(df) > 0:
+            logger.info(f"датафрейм обнаружен")
+            if socket_name == True: 
+                socket_name = socket.gethostname()
+                logger.info(f'ищем данные по сокету {socket_name}')
+                records_dict = df.to_dict('records')
+                index_result = [index for index, dct in enumerate(records_dict) if dct['name_pc'] == socket_name]
+                if len(index_result)>0:
+                    try:
+                        index_data=index_result[0]
+                        result_all = records_dict[index_data]
+                        name_pc = result_all['name_pc']
+                        server = result_all['server']
+                        port = result_all['port']
+                        username = result_all['username']
+                        send_from = result_all['send_from']
+                        password = result_all['password']
+                        logger.info(f'данные получены и возвращены кортежем в следующем порядке : name_pc server port username send_from password')
+                        return name_pc, server, port, username, send_from, password
+                    except Exception as e:
+                        logger.error(f'Ошибка функции {get_data_user_param.__name__} в блоке получения данных пользователя по имени пк {socket_name} ошибка {e}')
+            else :
+                logger.info(f"Поиск данных с учетом соккета не включен, будет возвращен весь фрейм с данными")
+                return df
+        else: 
+            logger.info(f"датафрейм не найден")
+            return None
+    except Exception as e:
+        logger.error(f'Ошибка функции {get_data_user_param.__name__} ошибка {e}')
+
+get_data_user_param()
+
+KOSTRACIVA = '2023-01-01' # дата до которой все обрезаем
+logger.info(f'Дата по которую все обрезаем {KOSTRACIVA}')
+
+logger.info(f'Считываем парк')
+try:
+    PARK = pd.read_excel(links_main(fr"{DIR}\file_links.txt", "park"), engine='calamine', sheet_name='БД')
+    PARK['мес'] = PARK['мес'].fillna(0).apply(lambda x: xlrd.xldate_as_datetime(x, 0))
+    PARK = PARK[['мес', 'Подразделение/площадка', 'ТИП', 'Марка', 'Бонус', 'Доход, руб.']]
+except Exception as e:
+    logger.error(f'Не удалось считать парк {e}')
+
+
+logger.info(f'Считываем планы')
+try:
+    PLAN_AUTO = pd.read_excel(links_main(fr"{DIR}\file_links.txt", "plan_auto"), engine='calamine', sheet_name='auto')
+except Exception as e:
+    logger.error(f'Не удалось считать планы {e}')
+
+
+logger.info(f'Считываем фреймы логики объединения по брендам для  ПАРКА и ПЛАНОВ')
+try:
+    CONNECTION_BRAND_PARK = pd.read_excel(links_main(fr"{DIR}\file_links.txt", "conenection_brand"), engine='calamine', sheet_name='PARK')
+    CONNECTION_BRAND_PLAN_AUTO = pd.read_excel(links_main(fr"{DIR}\file_links.txt", "conenection_brand"), engine='calamine', sheet_name='PLAN_AUTO')
+except Exception as e:
+    logger.error(f'Не удалось фреймы логики {e}')
+
+logger.info("Получаем парметры пользователя для работы с почтой")
+try:
+    NAME_PC, SERVER, PORT, USER_NAME, SEND_FROM, PASSWORD = get_data_user_param()
+except Exception as ex_:
+    logger.error(f"Ошибка получения данных: {ex_}")
+
+logger.info("Проверка полученных параметров")
+
+resul_mail_param = all([i is not None for i in [NAME_PC, SERVER, PORT, USER_NAME, SEND_FROM, PASSWORD]])
+
+if resul_mail_param:
+    logger.info(f"Все данные для работы с почтой присутствуют {resul_mail_param}")
+else:
+    logger.error(f"Некоторые данные для работы с почтой отсутствуют {resul_mail_param} {get_data_user_param()}")
+
+
+logger.info(f'Период даты с которой строятся простынки (шаблоны) для заполнения данных боротки')
+try:
+    YEAR_SHABLON = 2023
+    MONTH_SHABLON = 1 
+    DAY_SHABLON = 1
+    logger.info(f'Период с которой строятся простынки оборотки: год {YEAR_SHABLON} мес {MONTH_SHABLON} день {DAY_SHABLON}')
+except Exception as e:
+    logger.error(f'Не удалось свормировать простынки {e}')
+
+
+logger.info(f'Считываем данные для работы с SQL')
+try:
+    SERVER_SQL = links_main(fr"{DIR}\file_links.txt", "server_sql")
+    DATABASE_SQL = links_main(fr"{DIR}\file_links.txt", "database_sql")
+    USERNAME_SQL = links_main(fr"{DIR}\file_links.txt", "username_sql")
+    PASSWORD_SQL = links_main(fr"{DIR}\file_links.txt", "password_sql")
+except Exception as e:
+    logger.error(f'Не удалось cxbnfnm данные для работы с SQL {e}')
+
+
+logger.info(f'Считываем фрейм кривых винов')
+try:
+    EXCEPTION_VIN = pd.read_excel(links_main(fr"{DIR}\file_links.txt", "except_vin"), engine='calamine')['except_vin']
+except Exception as e:
+    logger.error(f'Не удалось считать фрейм кривых винов {e}')
+
+# фрейм с правками марок
+logger.info(f'Считываем фрейм с правками марок')
+try:
+    df_rename_au = pd.read_excel(links_main(fr'{DIR}\file_links.txt','rename_au'), engine='calamine', sheet_name='autocentry')
+except Exception as e:
+    logger.error(f'Не удалось считать с правками марок {e}')
+
+
+logger.info(f'Считываем фрейм со ссылками на файлы и ключами')
+try:
+    df_main = pd.read_excel(links_main(fr'{DIR}\file_links.txt', 'read_file_main'), engine='calamine', sheet_name='Sheet1')
+    df_main['date_update'] = df_main['ссылка'].apply(lambda x: file_update(fr'{x}'))
+    df_main['date_update'] = df_main['date_update'].apply(lambda x: str(x).split(' ')[0])
+    df_main['date_update'] = pd.to_datetime(df_main['date_update'] )
+except Exception as e:
+    logger.error(f'Не удалось считать фрейм со ссылками на файлы и ключами {e}')
+
+
+
+# Настройки по умолчанию (на случай, если пользователь не ответит)
+# КОНСТАНТЫ отвечающие за настройки
+IGNORE_METADATA = False     # True - обновлять все объекты, False - обновлять только объекты, изменённые за последние 10 дней
+DAYS_AGO_METADATA = 10      # Количество дней для обновления объектов, изменённых за последние N дней
+RUN_TEMP = True             # True - запускать скрипт с темпом, False - запускать скрипт без темпов
+RUN_EXCEPT_GO_EMAIL = True  # True - запускать скрипт с рассылкой ошибок по почте, False - запускать скрипт без рассылки ошибок
+
+# ниже диалоговое окно с выбором настроек для каждого пользователя по умолчанию
+# НАЧАЛО БЛОКА ДИАЛОГА С ПОЛЬЗОВАТЕЛЕМ
+# ===========================================
+# Функция ввода с таймаутом
+# ===========================================
+def input_with_timeout(prompt, timeout=90):
+    """
+    Запрашивает ввод с таймаутом.
+    Возвращает None, если время истекло.
+    """
+    result = [None]
+
+    def target():
+        try:
+            result[0] = input(prompt)
+        except Exception:
+            result[0] = None
+
+    thread = threading.Thread(target=target, daemon=True)
+    thread.start()
+    thread.join(timeout)
+    return result[0]
+
+# ===========================================
+# Функция вывода конфигурации
+# ===========================================
+def dialog(name, metadata, days_ago, run_temp, run_ex_go_eml):
+    logger.info(f"\n✅ Скрипт запущен от имени {name}")
+    if metadata:
+        logger.info('🔧 Будут обновлены все объекты (в обход метаданных)')
+    else:
+        logger.info(f'📅 Будут обновлены объекты, изменённые за последние {days_ago} дн.')
+    if run_temp:
+        logger.info('⚡ Скрипт запустится с темпом')
+    else:
+        logger.info('🔁 Скрипт запустится без темпов')
+    if run_ex_go_eml:
+        logger.info('📧 Скрипт запустится с рассылкой ошибок по почте')
+    else:
+        logger.info('🔕 Скрипт запустится без рассылки ошибок')
+
+
+# ===========================================
+# ОСНОВНОЙ ДИАЛОГ
+# ===========================================
+logger.info(f'✅'*50)
+logger.info(f'Внимание - на выбор ответа дается 90 секунд - иначе будет запущен скрипт по умолчанию')
+
+logger.info("Ожидание ввода.............")
+user_input = input_with_timeout(
+    'От чьего имени запущен скрипт: Сергей или Роман? (1 — Сергей, 2 — Роман, 3 - Прервать выполнение): ',
+    timeout=30
+)
+
+# === Обработка ответа ===
+if user_input is None:
+    logger.info("\n⏳ Время ожидания истекло. Продолжаем с настройками по умолчанию...")
+    admin_name = "Сергей (автозапуск)"
+    dialog(admin_name, IGNORE_METADATA, DAYS_AGO_METADATA, RUN_TEMP, RUN_EXCEPT_GO_EMAIL)
+else:
+    user_input = user_input.strip()
+    if user_input == '1':
+        admin_name = 'Сергей'
+        # Сохраняем основные настройки
+    elif user_input == '2':
+        admin_name = 'Роман'
+        IGNORE_METADATA = False
+        DAYS_AGO_METADATA = 1
+        RUN_TEMP = False
+        RUN_EXCEPT_GO_EMAIL = False
+    elif user_input == '3':
+        logger.info("🛑 Вы ввели 3. Завершение работы по запросу пользователя.")
+        logger.info("👋 Скрипт будет остановлен.")
+        time.sleep(5)
+        exit()
+
+    else:
+        logger.info(f"⚠️  Неизвестный ввод: {user_input}. Окно будет закрыто.")
+        logger.info("👋 Скрипт остановлен.")
+        exit()
+
+    dialog(admin_name, IGNORE_METADATA, DAYS_AGO_METADATA, RUN_TEMP, RUN_EXCEPT_GO_EMAIL)
+
+# === Задержка перед запуском (для просмотра вывода) ===
+logger.info("\n🚀 Скрипт начнёт выполнение через 5 секунд...")
+time.sleep(5)
+
+# ===========================================
+# ДАЛЬШЕ ИДЁТ ОСНОВНАЯ ЛОГИКА СКРИПТА
+# ===========================================
+logger.info("\nПогнали выполнять скрипт...")
+logger.info(f'{IGNORE_METADATA}, {DAYS_AGO_METADATA}, {RUN_TEMP}, {RUN_EXCEPT_GO_EMAIL}')
+# КОНЕЦ БЛОКА ДИАЛОГА С ПОЛЬЗОВАТЕЛЕМ
 
 
 def Shapka (table, text='VIN'):
@@ -155,8 +374,8 @@ def Shapka (table, text='VIN'):
         return(table)
     except:
         return(table)
-    
-    
+
+
 def head_registr_low_strip(df):
     """переводит названия столбцов в нижний регистр удаляет пробелы слева и справа и добавляет _ ниж подч
 
@@ -170,15 +389,15 @@ def head_registr_low_strip(df):
         return df.rename(columns={f'{i}' : f'{str(i).lower().strip().replace(" ","_")}' for i in df.columns})
     except Exception as ex_:
                 print(f'ошибка {ex_} функция - {head_registr_low_strip.__name__}')
-                
-                
-def list_date_work(YEAR=2023, MONTH=1, DAY=1):
+
+
+def list_date_work(YEAR=YEAR_SHABLON, MONTH=MONTH_SHABLON, DAY=MONTH_SHABLON):
     """функция формируюящая список дат с и по
     """
     try:
-        start_date = DT.datetime(YEAR, MONTH, DAY) # начальная дата
-        cur =  (DT.date.today()-timedelta(days=1)).strftime('%Y-%m-%d').split('-') # текущая дата минус 1 день
-        end_date = DT.datetime(int(cur[0]), int(cur[1]), int(cur[-1]))             # текущая дата минус 1 день
+        start_date = datetime.datetime(YEAR, MONTH, DAY) # начальная дата
+        cur =  (datetime.date.today()-timedelta(days=1)).strftime('%Y-%m-%d').split('-') # текущая дата минус 1 день
+        end_date = datetime.datetime(int(cur[0]), int(cur[1]), int(cur[-1]))             # текущая дата минус 1 день
 
         res = pd.date_range(
             min(start_date, end_date),
@@ -187,8 +406,7 @@ def list_date_work(YEAR=2023, MONTH=1, DAY=1):
         return res
     except Exception as ex_:
                 print(f'ошибка {ex_} функция - {list_date_work.__name__}')
-                
-                
+
 def read_datafarme(link):
     """считывает ссылку на книгу и получает имена всех листов и датафреймы
     пепеводит все имена листов в верхний регистр
@@ -200,14 +418,14 @@ def read_datafarme(link):
         получаем все датафреймы и имена листов 
     """
     try:
-        df_ = pd.read_excel(link, sheet_name=None)
+        df_ = pd.read_excel(link, engine='calamine', sheet_name=None)
         df_ = {key.upper(): value for key, value in df_.items()}  # привели названия листов в единый регистр
         df_names_lists = df_.keys()                               # получили все названия листов книги
         return df_, df_names_lists
     except Exception as ex_:
                 print(f'ошибка {ex_} функция - {read_datafarme.__name__}')
-                
-                
+
+
 def datetime_columns_convertor(df, name_colums=['дата']):
     """конвертирует столбцы с датами в формат даты
 
@@ -228,7 +446,6 @@ def datetime_columns_convertor(df, name_colums=['дата']):
     except Exception as ex_:
                 print(f'ошибка {ex_} функция - {datetime_columns_convertor.__name__}')
 
-
 def numeric_columns_convertor(df, name_colums: list = ['внесено_в_рублях', 'получено_за_ам_руб', 'себестоимость', 'цена']):
     """конвертирует нужные столбцы в float
 
@@ -248,8 +465,7 @@ def numeric_columns_convertor(df, name_colums: list = ['внесено_в_руб
         return df
     except Exception as ex_:
                 print(f'ошибка {ex_} функция - {numeric_columns_convertor.__name__} запнулось на {i, j}')
-                
-                
+
 def zakazy(df, date_search, date_search_in_column, vid_zakaza:str, vid_zakaza_search_in_column:str):
     """считает количество заказов 
 
@@ -269,8 +485,7 @@ def zakazy(df, date_search, date_search_in_column, vid_zakaza:str, vid_zakaza_se
         return res
     except Exception as ex_:
                 print(f'ошибка {ex_} функция - {zakazy.__name__} входяные параметры {date_search, date_search_in_column, vid_zakaza, vid_zakaza_search_in_column}')
-                
-                
+
 def zakazy_vid_oplaty(df, date_search, date_search_in_column, vid_zakaza:str, vid_zakaza_search_in_column:str, vid_oplaty_search_in_column:str, vid_oplaty:str):
     """считает количество заказов 
 
@@ -291,8 +506,7 @@ def zakazy_vid_oplaty(df, date_search, date_search_in_column, vid_zakaza:str, vi
         return res
     except Exception as ex_:
                 print(f'ошибка {ex_} функция - {zakazy_vid_oplaty.__name__} входяные параметры {date_search, date_search_in_column, vid_zakaza, vid_zakaza_search_in_column, vid_oplaty_search_in_column, vid_oplaty}')
-                
-                
+
 def otkazy(df, date_search, date_search_in_column, vid_zakaza:str, vid_zakaza_search_in_column:str, ststus_arhiv:str, arhiv_search_in_column:str):
     """считает количество отказов 
 
@@ -317,8 +531,7 @@ def otkazy(df, date_search, date_search_in_column, vid_zakaza:str, vid_zakaza_se
         return res
     except Exception as ex_:
                 print(f'ошибка {ex_} функция - {otkazy.__name__} входяные параметры {date_search, date_search_in_column, vid_zakaza, vid_zakaza_search_in_column, ststus_arhiv, arhiv_search_in_column}')
-                
-                
+
 def forma_pay(pay:str):
     """функция преобразования видов оплат в два парметра кре/нал
 
@@ -332,15 +545,14 @@ def forma_pay(pay:str):
     kredit = ['кре', 'банк', 'лиз', 'finance', 'direct', 'втб', 'альфа'] # кре
     
     try:
-        result = any([i in pay for i in kredit])
+        result = any([i in str(pay).lower().strip() for i in kredit])
         if result == True:
             return 'кре'
         else:
             return 'нал'
     except Exception as ex_:
-                print(f'ошибка {ex_} функция - {forma_pay.__name__} входяные параметры {pay}')
-                
-                
+                print(f'ошибка {ex_} функция - {forma_pay.__name__} входяные параметры {pay}') 
+
 def kolichestyo_vidach(df, date_serch, column_date_serch, forma_oplaty, colmn_forma_pay_serch):
     """кол-во фактических выдач по форме оплаты кре/нал
 
@@ -360,8 +572,8 @@ def kolichestyo_vidach(df, date_serch, column_date_serch, forma_oplaty, colmn_fo
         return res
     except Exception as ex_:
                 print(f'ошибка {ex_} функция - {kolichestyo_vidach.__name__} входяные параметры {date_serch, column_date_serch, forma_oplaty, colmn_forma_pay_serch}')
-                
-                
+
+
 def zakazy_s_vchetom_okazov_i_vidach(df, date_serch, column_date, column_sum_1, column_sum_2, column_sum_3):
     """кол-во заказаов с учетом отказов и выдач накопительно
 
@@ -386,8 +598,7 @@ def zakazy_s_vchetom_okazov_i_vidach(df, date_serch, column_date, column_sum_1, 
     
     except Exception as ex_:
                 print(f'ошибка {ex_} функция - {zakazy_s_vchetom_okazov_i_vidach.__name__} входяные параметры {date_serch, column_date, column_sum_1, column_sum_2, column_sum_3}')
-                
-                
+    
 def sum_finance_day(df, date_serch, column_date_serch, sum_column):
     """_summary_
 
@@ -405,8 +616,7 @@ def sum_finance_day(df, date_serch, column_date_serch, sum_column):
         return res
     except Exception as ex_:
                 print(f'ошибка {ex_} функция - {sum_finance_day.__name__} входяные параметры {date_serch, column_date_serch, sum_column}')
-                
-                
+
 def sum_finance_day_nakopitelno(df, date_serch, column_date, column_sum):
     """суммирование показателей накопительно с начала месяца
 
@@ -419,7 +629,6 @@ def sum_finance_day_nakopitelno(df, date_serch, column_date, column_sum):
     Returns:
         _type_: _description_
     """
-    
     try:
         date_serch = pd.to_datetime(date_serch)
     except:
@@ -429,7 +638,6 @@ def sum_finance_day_nakopitelno(df, date_serch, column_date, column_sum):
     res = df[(df[column_date]>=date_start) 
                           & (df[column_date]<=date_serch)][column_sum].sum()
     return res
-
 
 def nacenka(df, date_serch, column_date_serch, colimn_sum_revenue, colimn_sum_cost_price):
     """рассчет наценки
@@ -444,18 +652,15 @@ def nacenka(df, date_serch, column_date_serch, colimn_sum_revenue, colimn_sum_co
     Returns:
         _type_: _description_
     """
-    
     vir = df[df[column_date_serch]==date_serch][colimn_sum_revenue].sum()
     seb = df[df[column_date_serch]==date_serch][colimn_sum_cost_price].sum()
     try:
-        res = (vir-seb)/seb if vir > 0 else 0
+        res = (vir-seb)/seb if vir > 0 and seb > 0 else 0 # было res = (vir-seb)/seb if vir > 0 else 0
         return round(res, 2)
-    
     except Exception as ex_:
         print(f'ошибка {ex_} функция - {nacenka.__name__} входяные параметры {date_serch, column_date_serch, colimn_sum_revenue, colimn_sum_cost_price}')
         return 0
-    
-    
+
 def prihod_auto(df, date_serch, column_date_na_sclad, column_date_zakaza, svobod_klient='svobod'or'klient'):
     """_summary_
 
@@ -469,7 +674,6 @@ def prihod_auto(df, date_serch, column_date_na_sclad, column_date_zakaza, svobod
     Returns:
         _type_: _description_
     """
-    
     try:
         klient = df[(df[column_date_na_sclad]==date_serch) 
                         & (df[column_date_zakaza]<date_serch)]['vin'].count()
@@ -478,13 +682,10 @@ def prihod_auto(df, date_serch, column_date_na_sclad, column_date_zakaza, svobod
     except Exception as ex_:
         print(f'ошибка {ex_} функция - {prihod_auto.__name__} входяные параметры {date_serch, column_date_na_sclad, column_date_zakaza, svobod_klient}')
         return f'Проверьте дату {date_serch}'
-    
     return res
-
 
 def auto_na_sclade(df, date_serch, column_date_prihoda_na_sclad, column_date_realizacii, column_date_zakaza, pokazatel= 'all' or 'klient' or 'sclad' or 'demo'):
     """_summary_
-
     Args:
         df (_type_): фрейм по которому фильтруем
         date_serch (_type_): дата поиска
@@ -492,11 +693,10 @@ def auto_na_sclade(df, date_serch, column_date_prihoda_na_sclad, column_date_rea
         column_date_realizacii (_type_): колонка с датой продажи/реализации
         column_date_zakaza (_type_): колонка с датой заказа
         pokazatel (str, optional): _description_. Defaults to 'all'or'klient'or'sclad'.
-
     Returns:
         _type_: _description_
     """
-    dem = ['DEMO', 'ДЕМО']
+    dem = ['DEMO', 'ДЕМО', 'ТЕСТ-ДРАЙВ']
     try:
         all_ = df[(df[column_date_prihoda_na_sclad]<=date_serch) 
                     & ((df[column_date_realizacii].isna())
@@ -517,20 +717,16 @@ def auto_na_sclade(df, date_serch, column_date_prihoda_na_sclad, column_date_rea
     elif pokazatel == 'sclad': res = all_- klient
     elif pokazatel == 'demo': res = only_demo
     else: res = all_
-    
     return res
-
 
 def korrekt_forma_oplaty(df, vin, text_forma_oplaty,column_date_realizcii, column_date_oplaty):
     """корреткирует форму оплаты в СКЛАД по NP
-
     Args:
         df (_type_): фрейм по которому идет фильтрация
         vin (_type_): vin для поиска
         text_forma_oplaty (_type_): входная форма оплаты для сравнения с источника откуда берем vin
         column_date_realizcii (_type_): столбец с датой фактической выдачи проверяем чтоб была заполнена
         column_date_oplaty (_type_): столбец с данными формы оплаты
-
     Returns:
         _type_: _description_
     """
@@ -543,10 +739,8 @@ def korrekt_forma_oplaty(df, vin, text_forma_oplaty,column_date_realizcii, colum
         res = text_forma_oplaty
     return res
 
-
 def all_letters():
-    'все буквы ru_eng алфавита'
-    
+    'все буквы ru_eng алфавита' 
     import string
     try:
         eng = string.ascii_letters
@@ -555,14 +749,11 @@ def all_letters():
         return res
     except Exception as ex_:
         print(f'ошибка {ex_} функция - {all_letters.__name__}')
-        
-        
+
 def del_letters_date(word:str):
     """удаляет все буквы и порбелы лев прав
-
     Args:
         word (_type_): _description_
-
     Returns:
         _type_: _description_
     """
@@ -574,15 +765,12 @@ def del_letters_date(word:str):
         return word.strip()
     except Exception as ex_:
         print(f'ошибка {ex_} функция - {del_letters_date.__name__} входяные параметры {word}')
-        
-        
+
 def shablon_date_test(date:str):
     """проверяет формат даты по шаблону - если есть дата, возвращает очищенное знаечние даты
     если нет - возвращает входящее значение без изменений
-
     Args:
         date (str): стркоа с датой
-
     Returns:
         _type_: _description_
     """
@@ -593,13 +781,11 @@ def shablon_date_test(date:str):
     except:
         return date
     
-    
+
 def shablon_date_test_2(d):
     import datetime
-    # if d not in ['ok', 'nan', 'None', 'NaT', '-']:
     if '00:00:00' in d:
         d = d.split(' ')[0]
-
     if len(d.split('-')) == 3:
         try:
             datetime.datetime.strptime(d, '%Y-%m-%d')
@@ -612,16 +798,13 @@ def shablon_date_test_2(d):
             return 'ok'
         except Exception:
             return None if d=='0' or 0 else d
-        
-        
+                
 def shablon_date_test_pravka(date:str):
     """ функция для сбора ошибок дат
     проверяет формат даты по шаблону - если есть дата, возвращает 'ok'
     если нет - возвращает входящее значение без изменений
-
     Args:
         date (str): стркоа с датой
-
     Returns:
         _type_: _description_
     """
@@ -636,15 +819,12 @@ def shablon_date_test_pravka(date:str):
     except:
         return None if date=='0' else date
     
-    
 def auto_na_sclade_consignacia(df, date_serch):
     """консигнационные авто на складе
     есть на складе но счет поним не оплачен нами
-
     Args:
         df (_type_): df по которому ищем
         date_serch (_type_): дата поиска
-
     Returns:
         _type_: _description_
     """
@@ -655,16 +835,31 @@ def auto_na_sclade_consignacia(df, date_serch):
     except Exception as ex_:
         print(f'ошибка {ex_} функция - {auto_na_sclade_consignacia.__name__} входяные параметры {date_serch}')
         None
-        
-        
-def auto_u_puti_vikuplenie(df, date_serch):
-    """авто в пути выкупленные
-    есть дата оплаты счета но нет даты прихода на склад
 
+
+def auto_na_sclade_consignacia_dengi(df, date_serch):
+    """консигнационные авто на складе
+    есть на складе но счет поним не оплачен нами
     Args:
         df (_type_): df по которому ищем
         date_serch (_type_): дата поиска
+    Returns:
+        _type_: _description_
+    """
+    try:
+        res = df[(df['дата_прихода_на_склад']<=date_serch) & 
+                 ((df['дата_оплаты_счета'].isna()) | (df['дата_оплаты_счета']>date_serch)) ]['себестоимость_ам'].sum()
+        return int(res)
+    except Exception as ex_:
+        print(f'ошибка {ex_} функция - {auto_na_sclade_consignacia_dengi.__name__} входяные параметры {date_serch}')
+        None
 
+def auto_u_puti_vikuplenie(df, date_serch):
+    """авто в пути выкупленные
+    есть дата оплаты счета но нет даты прихода на склад
+    Args:
+        df (_type_): df по которому ищем
+        date_serch (_type_): дата поиска
     Returns:
         _type_: _description_
     """
@@ -674,15 +869,12 @@ def auto_u_puti_vikuplenie(df, date_serch):
     except Exception as ex_:
         print(f'ошибка {ex_} функция - {auto_u_puti_vikuplenie.__name__} входяные параметры {date_serch}')
         None
-        
-        
+
 def oplaty(df, date_serch):
     """считает сумму оплат на текущий день за авто
-
     Args:
         df (_type_): df по которому ведем поиск/фильтрацию
         date_serch (_type_): дата поиска
-
     Returns:
         _type_: _description_
     """
@@ -692,8 +884,7 @@ def oplaty(df, date_serch):
     except Exception as ex_:
         print(f'ошибка {ex_} функция - {oplaty.__name__} входяные параметры {date_serch}')
         None
-        
-        
+
 def tek_day():
     try:
         import datetime
@@ -701,30 +892,21 @@ def tek_day():
         return current_date
     except Exception as ex_:
         print(f'ошибка {ex_} функция - {tek_day.__name__}')
-        
-        
+
+
+# создаем df оборотки (шаблон) который будем заполнять входящими данными
 def df_oborotka_shablon(year:int, month:int, day:int):
     """щаблон для заполнения оборотки
-
     Args:
         year (int): год
         month (int): месяц
         day (int): число
-
     Returns:
         _type_: _description_
     """
     try:
         kalendar = list_date_work(year, month, day)
         df_oborotka = pd.DataFrame({'календарь': kalendar, 
-                                    # 'зкз_скл_кред': [0 for i in range(len(kalendar))],
-                                    # 'зкз_скл_нал': [0 for i in range(len(kalendar))],
-                                    # 'зкз_путь_кред': [0 for i in range(len(kalendar))],
-                                    # 'зкз_путь_нал': [0 for i in range(len(kalendar))],
-                                    # 'откз_скл_кред': [0 for i in range(len(kalendar))],
-                                    # 'откз_скл_нал': [0 for i in range(len(kalendar))],
-                                    # 'откз_путь_кред': [0 for i in range(len(kalendar))],
-                                    # 'откз_путь_нал': [0 for i in range(len(kalendar))],
                                     'зкз_путь_кред': [0 for i in range(len(kalendar))], # в процессе
                                     'зкз_склад_кред': [0 for i in range(len(kalendar))],# в процессе
                                     'зкз_путь_нал': [0 for i in range(len(kalendar))], # в процессе
@@ -774,8 +956,7 @@ def df_oborotka_shablon(year:int, month:int, day:int):
         return df_oborotka
     except Exception as ex_:
         print(f'ошибка {ex_} функция - {df_oborotka_shablon.__name__} входяные параметры {year, month, day} не удалось создать календарь')
-        
-        
+
 def min_date_column(df, column):
     """ считывает MIN дату по столбцу"""
     try:
@@ -809,12 +990,10 @@ def min_date_test(df):
         return 2005 if int(res.year)<2005 else int(res.year), int(res.month), int(res.day)
     except Exception as ex_:
         print(f'ошибка {ex_} функция - {min_date_test.__name__}')
-        return 2025, 1, 1
-    
-    
+        return 2025, 1, 1 
+
 def min_year_date_column(df, column):
     """считывает минимальный год по столбцу
-
     Args:
         df (_type_): _description_
         column (_type_): _description_
@@ -822,21 +1001,17 @@ def min_year_date_column(df, column):
     Returns:
         _type_: _description_
     """
-    
     try:
         res = df[df[column].notna()][column].min()
         return res.year
     except Exception as ex_:
         print(f'ошибка {ex_} функция - {min_year_date_column.__name__} входяные параметры {column}')
-        
-        
+
 def mean_year_date_column(df, column):
     """считывает средний год по столбцу
-
     Args:
         df (_type_): _description_
         column (_type_): _description_
-
     Returns:
         _type_: _description_
     """
@@ -845,17 +1020,14 @@ def mean_year_date_column(df, column):
         return res.year
     except Exception as ex_:
         print(f'ошибка {ex_} функция - {mean_year_date_column.__name__} входяные параметры {column}')
-        
-        
+
 def platejy(df, date_serch, sum_or_count: str = 'sum_' or 'count_', pokazatel:str = 'klient' or 'sclad'):
     """_summary_
-
     Args:
         df (_type_): df по которому идет фильтрация
         date_serch (_type_): дата поиска
         sum_or_count (str, optional): _description_. Defaults to 'sum_'or'count_'.
         pokazatel (str, optional): _description_. Defaults to 'klient'or'sclad'.
-
     Returns:
         _type_: _description_
     """
@@ -887,10 +1059,9 @@ def platejy(df, date_serch, sum_or_count: str = 'sum_' or 'count_', pokazatel:st
     except Exception as ex_:
         print(f'ошибка {ex_} функция - {platejy.__name__} входяные параметры {date_serch, sum_or_count, pokazatel}')
         
-        
+
 def unique_name_list_demo():
     """сбор уник имен листов с демо - используется в Manufacturing_df_oborotka
-
     Returns:
         _type_: _description_
     """
@@ -900,7 +1071,7 @@ def unique_name_list_demo():
             # собираем уникальные названия из объектов класса предобратки sclad с именами листов
             names_list.update(catalog_df_predobrabotka[i].df_sclad.с_листа.unique())
 
-        filtr_ = ['ТЕСТ', 'DEM', 'ДЕМ'] # фильтры для отсеивания демо авто
+        filtr_ = ['ТЕСТ', 'DEM', 'ДЕМ', 'DEMO_FUNC'] # фильтры для отсеивания демо авто
         filtr_demo_names_list = []      # названий листов имеющих отношение к демо
         for i in names_list:
             if any([p.upper() in i.upper() for p in filtr_ ]):
@@ -909,15 +1080,12 @@ def unique_name_list_demo():
     except Exception as ex_:
         print(f'ошибка {ex_} функция - {unique_name_list_demo.__name__} входяные параметры')
         
-        
 def oborotnie_sredstya(df, date_serch, result:str = 'not_demo' or 'not_demo_na_sclade' or 'demo'):
     """оборотные средства - возвращает результат в зависимости от запрашиваемого типа данных
-
     Args:
         df (_type_): df по которому фильтруем
         date_serch (_type_): дата поиска 
         result (str, optional): _description_. Defaults to 'not_demo' or 'not_demo_na_sclade' or 'demo'.
-
     Returns:
         _type_: _description_
     """
@@ -944,7 +1112,7 @@ def oborotnie_sredstya(df, date_serch, result:str = 'not_demo' or 'not_demo_na_s
             # res2 = df[(~df['с_листа'].str.contains('|'.join(unique_name_list_demo()))) & 
             #         (df['дата_оплаты_счета']<=date_serch) & 
             #         (df['дата_продажи_факт'].isna())]['себестоимость_ам'].sum()
-            return res1 #+res2            
+            return res1#+res2            
             
         elif result == 'demo':
             res1 = df[(df['с_листа'].str.contains('|'.join(unique_name_list_demo()))) & 
@@ -960,15 +1128,12 @@ def oborotnie_sredstya(df, date_serch, result:str = 'not_demo' or 'not_demo_na_s
             print(f'!!! проверьте поданный параметр "{result}"')
     except Exception as ex_:
         print(f'ошибка {ex_} функция - {oborotnie_sredstya.__name__} входяные параметры {date_serch, result}')
-        
-        
+    
 def proverka_oborotnih_sredsty(df, date_serch):
     """для проверки оборотных средств
-
     Args:
         df (_type_): df по которому фильтруем
         date_serch (_type_): дата поиска
-
     Returns:
         _type_: _description_
     """
@@ -982,15 +1147,12 @@ def proverka_oborotnih_sredsty(df, date_serch):
         return res1+res2
     except Exception as ex_:
         print(f'ошибка {ex_} функция - {proverka_oborotnih_sredsty.__name__} входяные параметры {date_serch}')
-        
-        
+
 def status_zakaza_VARSH_BAIK_UKA_HYUNDAI(znach):
     """индивидуально только для _VARSH_BAIK_UKA_HYUNDAI так как у них нет NP
     и статусы склада свои, подгоняем под общий стандарт
-
     Args:
         znach (_type_): _description_
-
     Returns:
         _type_: _description_
     """
@@ -1004,14 +1166,11 @@ def status_zakaza_VARSH_BAIK_UKA_HYUNDAI(znach):
             return 'в пути'
     except Exception as ex_:
         print(f'ошибка {ex_} функция - {status_zakaza_VARSH_BAIK_UKA_HYUNDAI.__name__} входяные параметры {znach}')
-        
-        
+
 def pravka_statysa_KIA_(word):
     """индивидуальная правка статуса склада np
-
     Args:
         word (_type_): _description_
-
     Returns:
         _type_: _description_
     """
@@ -1026,11 +1185,9 @@ def pravka_statysa_KIA_(word):
             return 'на складе'
     except Exception as ex_:
         print(f'ошибка {ex_} функция - {pravka_statysa_KIA_.__name__} входяные параметры {word}')
-        
-        
+
 def kostraciya(df_np, df_sklad, df_oplata, date_kastracii):
     """функция обрезания данных NP СКЛАДА и ОПЛАТ
-
     Args:
         df_sklad (_type_): склад
         df_np (_type_): np
@@ -1040,6 +1197,7 @@ def kostraciya(df_np, df_sklad, df_oplata, date_kastracii):
         _type_: 2 df
     """
     try:
+        
         sklad_do_obrezaniya = df_sklad[df_sklad['дата_прихода_на_склад']<date_kastracii]            # кострируем склад
         sklad_do_obrezaniya = sklad_do_obrezaniya.groupby(['vin','цена_продажи', 'дата_прихода_на_склад']).count().reset_index()[['vin','цена_продажи', 'дата_прихода_на_склад']] # группуируем
         sklad_do_obrezaniya = sklad_do_obrezaniya[['vin', 'дата_прихода_на_склад','цена_продажи']]
@@ -1065,16 +1223,16 @@ def kostraciya(df_np, df_sklad, df_oplata, date_kastracii):
                                         & ((df_sklad['дата_оплаты_счета']>=date_kastracii) | (df_sklad['дата_оплаты_счета'].isna()))
                                         & ((df_sklad['дата_продажи_факт']>=date_kastracii) | (df_sklad['дата_продажи_факт'].isna()))]
         
+        
         return new_np, sklad_posle_obrezaniya, df_oplata
     except Exception as ex_:
         print(f'ошибка {ex_} функция - {kostraciya.__name__} входяные параметры {date_kastracii}')
-        
-        
+    
+
 def kostraciya_2(df_np, df_sklad, df_oplata, date_kastracii):
     """функция обрезания данных NP СКЛАДА все тож как и в kostraciya 
     только берем авто пришедшее на склад до даты кострации и у которых дата продажи 2025 год
     это могут быть демо авто или подменные
-
     Args:
         df_sklad (_type_): склад
         df_np (_type_): np
@@ -1084,8 +1242,7 @@ def kostraciya_2(df_np, df_sklad, df_oplata, date_kastracii):
         _type_: 2 df
     """
     try:
-        sklad_do_obrezaniya = df_sklad[(df_sklad['дата_прихода_на_склад']<date_kastracii) 
-                           & (df_sklad['дата_продажи_факт']>='2025-01-01')]
+        sklad_do_obrezaniya = df_sklad[((df_sklad['дата_прихода_на_склад']<date_kastracii) & (df_sklad['дата_продажи_факт']>='2025-01-01')) | df_sklad['vin'].isin(EXCEPTION_VIN)]
         
         # sklad_do_obrezaniya = df_sklad[df_sklad['дата_прихода_на_склад']<date_kastracii]            # кострируем склад
         sklad_do_obrezaniya = sklad_do_obrezaniya.groupby(['vin','цена_продажи', 'дата_прихода_на_склад']).count().reset_index()[['vin','цена_продажи', 'дата_прихода_на_склад']] # группуируем
@@ -1107,15 +1264,15 @@ def kostraciya_2(df_np, df_sklad, df_oplata, date_kastracii):
         # df_oplata = df_oplata[(df_oplata['дата_оплаты']>=date_kastracii)]
         
         
-        sklad_posle_obrezaniya = df_sklad[(df_sklad['дата_прихода_на_склад']<date_kastracii) 
-                           & (df_sklad['дата_продажи_факт']>='2025-01-01')]
+        sklad_posle_obrezaniya = df_sklad[((df_sklad['дата_прихода_на_склад']<date_kastracii) 
+                           & (df_sklad['дата_продажи_факт']>='2025-01-01')) | df_sklad['vin'].isin(EXCEPTION_VIN)]
         
         
         return new_np, sklad_posle_obrezaniya
     except Exception as ex_:
         print(f'ошибка {ex_} функция - {kostraciya.__name__} входяные параметры {date_kastracii}')
-        
-        
+    
+
 def status_zakaza_po_date(date_zakaza, date_prih):
     """определяет логистический статус авто 
     по дате заказа и прихода
@@ -1134,8 +1291,7 @@ def status_zakaza_po_date(date_zakaza, date_prih):
             return 'на складе'
     except Exception as ex_:
         print(f'ошибка {ex_} функция - {status_zakaza_po_date.__name__} входяные параметры {date_zakaza, date_prih}')
-        
-        
+    
 def one_unique_pokazatel(df, vin, column):
     """возвращает резуьтат искомого данного по vin
 
@@ -1152,8 +1308,8 @@ def one_unique_pokazatel(df, vin, column):
         return res 
     except Exception as ex_:
         print(f'ошибка {ex_} функция - {one_unique_pokazatel.__name__} входяные параметры {vin, column}')
-        
-        
+
+
 def convertor_brands_in_PARK(marka, region):
     """ подается марка и регион из оборотки
     возвращает конвертированные данные для поиска бонусов в ПАРКЕ
@@ -1166,26 +1322,21 @@ def convertor_brands_in_PARK(marka, region):
         _type_: повзращает пару для поиска в ПАРКЕ
     """
     try:
- 
         mark = list(CONNECTION_BRAND_PARK[(CONNECTION_BRAND_PARK['марка_фильтр']==marka) 
                                      & (CONNECTION_BRAND_PARK['регион_фильтр']==region)]['марка'])
         reg = list(CONNECTION_BRAND_PARK[(CONNECTION_BRAND_PARK['марка_фильтр']==marka) 
                                     & (CONNECTION_BRAND_PARK['регион_фильтр']==region)]['подразделение'])
         return mark, reg
- 
     except Exception as ex_:
         print(f'ошибка {ex_} функция - {convertor_brands_in_PARK.__name__} входяные параметры {marka, region}')
-        
-        
+
 def bonus_park(date_serch, list_marka:list, list_reg:list, result_column):
     """вытаскивает данные из ПАРКА
-
     Args:
         date_serch (_type_): дата поиска
         list_marka (list): список марок
         list_reg (list): список регионов
         result_column (_type_): по какому столбцу ищем
-
     Returns:
         _type_: _description_
     """
@@ -1200,8 +1351,7 @@ def bonus_park(date_serch, list_marka:list, list_reg:list, result_column):
             return 0
     except Exception as ex_:
         print(f'ошибка функции {bonus_park.__name__} {ex_} не удалось определеить входные параметры {date_serch, list_marka, list_reg, result_column}')
-        
-        
+    
 def individ_date_plan(year, month):
     try:
         year = str(year)
@@ -1212,7 +1362,6 @@ def individ_date_plan(year, month):
     except Exception as ex_:
         print(f'Ошибка функции {individ_date_plan.__name__} {ex_} не удалось преобразовать {year}{month}')
         
-        
 def result_date_update(key, serch_column):
     'вовращае дату обновления файла'
     try:
@@ -1221,8 +1370,7 @@ def result_date_update(key, serch_column):
     except Exception as ex_:
         print(f'ошибка функции {result_date_update.__name__} не удалось определеить входные параметры {key, serch_column}')
         None
-        
-        
+
 def read_file_arhiv(name_objekt, name_list:str='oborotka', name_file_link:str = "copy_link_dir"):
     """функция получает имя объекта и считывает готовые данные из файла
     в определенной директории ища это имя объекта
@@ -1235,30 +1383,27 @@ def read_file_arhiv(name_objekt, name_list:str='oborotka', name_file_link:str = 
         _type_: _description_
     """
     try:
-        directory = links_main(fr"{script_dir}/file_links.txt", name_file_link)               # директория где ищем
+        directory = links_main(fr"{DIR}\file_links.txt", name_file_link)               # директория где ищем
         pattern = name_objekt                                                   # что ищем
         files = [i for i in os.listdir(directory) if pattern in i][0]           # результат
-        df = pd.read_excel(fr'{directory}\{files}', sheet_name=name_list)      # считываем данные
+        df = pd.read_excel(fr'{directory}\{files}', engine='calamine', sheet_name=name_list)      # считываем данные
         df = df[[i for i in df.columns if i not in 'Unnamed: 0']]
         return df
     except Exception as ex_:
         print(f'ошибка функции {read_file_arhiv.__name__} {ex_} не удалось найти объект {name_objekt} в дирректории{directory} или произошла ошибка чтения файла')
-        
-        
+
 def return_link_directory(pattern, name_link):
     """_summary_
-
     Args:
         pattern (_type_): искомый объект в дирректории
         name_link (_type_): имя ключа на ссылку
-
     Returns:
         _type_: _description_
     """
     import os
     
     try:
-        directory = links_main(fr"{script_dir}/file_links.txt", name_link)               # директория где ищем
+        directory = links_main(fr"{DIR}\file_links.txt", name_link)               # директория где ищем
         pattern = pattern                                                   # что ищем
         files = [i for i in os.listdir(directory) if pattern in i][0]           # результат
         link = fr'{directory}\{files}'    # считываем данные
@@ -1269,30 +1414,24 @@ def return_link_directory(pattern, name_link):
             print(f'ссфлка {link} не активна {aktiv}')
     except Exception as ex_:
         print(f'ошибка функции {return_link_directory.__name__} {ex_} входне параметры {pattern, name_link}')
-        
-        
+    
 def yesterday(days:int=1):
     """возвращает дату на вчера - по цморлчанию минус 1 день
-
     Args:
         days (int, optional): на сколько дней назад откатываемся по дате. Defaults to 1.
-
     Returns:
         _type_: _description_
     """
-    
     try:
         from datetime import datetime, timedelta
         date = datetime.now()
         new_date = date - timedelta(days=days)# вычитание одного дня
         return new_date
     except Exception as ex_:
-        print(f'ошибка функции {return_link_directory.__name__}  {ex_}')
-        
-        
+        print(f'ошибка функции {yesterday.__name__}  {ex_}')
+
 def back_days_ago(days_serch, days:int=1):
     """от поступившей даты отнимает количество дней
-
     Args:
         days_serch - входящая дата от которой будем вести отсчет
         days (int, optional): на сколько дней назад откатываемся по дате. Defaults to 1.
@@ -1300,7 +1439,6 @@ def back_days_ago(days_serch, days:int=1):
     Returns:
         _type_: _description_
     """
-    
     try:
         from datetime import datetime, timedelta
         date = days_serch
@@ -1308,18 +1446,15 @@ def back_days_ago(days_serch, days:int=1):
         return new_date
     except Exception as ex_:
         print(f'ошибка функции {back_days_ago.__name__}  {ex_}')
-        
 
 def pokazatel_nakopitelno_diapazon_date(df, date_serch, days_back, column_result):
     """функция рассчета показателя накопительно на текущий день с откатом дней назад
     дата подяется в Timestamp
-
     Args:
         df (_type_): _description_ 
         date_serch (Timestamp): _description_ - дата поиска 
         days_back(int) - на сколько дней назад откатить 
         column_result(str) - колонка по которой считаем показатель накопительно 
-
     Returns:
         _type_: _description_
     """
@@ -1329,8 +1464,8 @@ def pokazatel_nakopitelno_diapazon_date(df, date_serch, days_back, column_result
         return res
     except Exception as ex_:
         print(f'Ошибка функции {pokazatel_nakopitelno_diapazon_date.__name__} {ex_}')
-        
-        
+
+
 def sravnenie_arh_skl_k_tek(vin, df_arh, sf_tek):
     try:
         result = []
@@ -1353,8 +1488,7 @@ def sravnenie_arh_skl_k_tek(vin, df_arh, sf_tek):
             return f'vin {vin} есть но данных нет'
         else:
             return f'не удалось найти {vin}'
-        
-        
+
 def update_file(link):
     """обновление сводной таблицы Excel
     # блок импортов для обновления сводных
@@ -1363,6 +1497,12 @@ def update_file(link):
     import win32com.client
     Args:
         link (_type_): ссылка на файл - который нужно обновить
+
+    ВАЖНО - ПРЕДВАРИТЕЛЬНАЯ НАСТРОЙКА САМОГО ЭКСЕЛЯ
+    Перейдите на вкладку Данные → Получить данные → Параметры запроса.
+    В левой панели выберите ГЛОБАЛЬНЫЕ → Конфиденциальность .
+    Выберите опцию Всегда игнорировать уровни конфиденциальности .
+    Нажмите ОК.
     """
     try:
         xlapp = win32com.client.DispatchEx("Excel.Application")
@@ -1371,7 +1511,7 @@ def update_file(link):
         wb.Application.DisplayAlerts = True  # отображает панель обновления иногда из-за перекрестного открытия предлагает ручной выбор обновления True - показать панель
         wb.RefreshAll()
         #xlapp.CalculateUntilAsyncQueriesDone() # удержит программу и дождется завершения обновления. было прописано time.sleep(30)
-        time.sleep(120) # задержка 60 секунд, чтоб уж точно обновились сводные wb.RefreshAll() - иначе будет ошибка 
+        time.sleep(60) # задержка 60 секунд, чтоб уж точно обновились сводные wb.RefreshAll() - иначе будет ошибка 
         wb.Application.AskToUpdateLinks = True   # запрещает автоматическое  обновление связей / то есть в настройках экселя (ставим галку обратно)
         wb.Save()
         wb.Close()
@@ -1382,16 +1522,13 @@ def update_file(link):
         del xlapp # удаляем сслыки переменных иначе процесс эксель не завершается и висит в дистпетчере
     except Exception as ex_:
         print(f'ошибка функции {update_file.__name__} {ex_} не удалось обновить файл по ссылке {link}')
-        
-        
+
 def return_email_except_df(obj, name_serch_col, name_col):
     """возыращает список данных из df
-
     Args:
         obj (_type_): искомый объект
         name_serch_col (_type_): имя столбца по которому идет фильтрация
         name_col (_type_): имя результирующего столбца по которому вернется ответ
-
     Returns:
         _type_: list
     """
@@ -1401,42 +1538,37 @@ def return_email_except_df(obj, name_serch_col, name_col):
         return result
     except Exception as ex_:
         print(f'ошибка функции {return_email_except_df.__name__} значение для поиска {obj} поиск по колонке {name_serch_col} реузльтат по колонке {name_col} ошибка {ex_}')
-        
-        
+
+# считываем актуальный пароль 
 def my_pass():
     """функция считывания пароля
-
     Returns:
         _type_: _description_
     """
-    
     try:
-        with open(links_main(fr"{script_dir}/file_links.txt", "pass_link"), 'r') as actual_pass:
+        with open(links_main(fr"{DIR}\file_links.txt", "pass_link"), 'r') as actual_pass:
             return actual_pass.read()
         
     except Exception as ex_:
         print(f'ошибка функции {my_pass.__name__} {ex_}')
         
-        
 def send_mail(send_to:list, file_link, file_name):
     """рассылка почты
-
     Args:
         send_to (list): список адресов для рассылки
         file_link(str): ссылка на файл
         file_name(str): имя файла в данном варианте нужно указывать с расширением 'BAIC_MSK.xlsx' 
     """
     from datetime import datetime, date, timedelta
-    
     try:
         send_from = SEND_FROM                                                               
-        subject = f"Проверка {file_name.split('_')[0]} NP и SCLAD на {(datetime.now()-timedelta(1)).strftime('%d-%m-%Y')}"                                                                 
+        subject = f"Проверка {file_name.split('_')[0]} NP и SCLAD на {(datetime.now()-timedelta(1)).strftime('%d-%m-%Y')} service_message"                                                                 
         text = f"Здравствуйте\nВо вложении результат проверки NP и SCLAD на {(datetime.now()- timedelta(1)).strftime('%d-%m-%Y')}"                                                                   
         files = fr'{file_link.strip()}'
         server = SERVER
         port = PORT
         username=USER_NAME
-        password = my_pass()
+        password = PASSWORD
         isTls=True
         
         msg = MIMEMultipart()
@@ -1463,28 +1595,26 @@ def send_mail(send_to:list, file_link, file_name):
     except Exception as ex_:
         print(f'ошибка функции {send_mail.__name__} {ex_} входне параметры {send_to} {file_link} {file_name}')
         
-        
+
 def send_mail_2(send_to:list, file_link, file_name, them = '', body=''):
     """рассылка почты
-
     Args:
         send_to (list): список адресов для рассылки
         file_link(str): ссылка на файл
         file_name(str): имя файла в данном варианте нужно указывать с расширением 'BAIC_MSK.xlsx' 
-        them(str) - тема письма
-        
+        them(str) - тема письма  
     """
     from datetime import datetime, date, timedelta
     
     try:
         send_from = SEND_FROM                                                               
-        subject = f"{them} на {(datetime.now()-timedelta(1)).strftime('%d-%m-%Y')}"                                                                 
+        subject = f"{them} на {(datetime.now()-timedelta(1)).strftime('%d-%m-%Y')} service_message"                                                                 
         text = f"Здравствуйте\n{body} на {(datetime.now()- timedelta(1)).strftime('%d-%m-%Y')}"                                                                   
         files = fr'{file_link.strip()}'
         server = SERVER
         port = PORT
         username=USER_NAME
-        password = my_pass()
+        password = PASSWORD
         isTls=True
         
         msg = MIMEMultipart()
@@ -1509,18 +1639,15 @@ def send_mail_2(send_to:list, file_link, file_name, them = '', body=''):
         smtp.quit()
         
     except Exception as ex_:
-        print(f'ошибка функции {send_mail.__name__} {ex_} входне параметры {send_to, file_link, file_name, them, body}')
-        
-        
+        print(f'ошибка функции {send_mail_2.__name__} {ex_} входне параметры {send_to, file_link, file_name, them, body}')
+
 def raznica_date_arhiv(df, serch_columns = 'календарь'):
     """находит разницу дней между датой на вчера и максимальной 
     датой в df в указанном столбце с датой (берет максимальноую)
     написана спец для работы с листом оборотки
-
     Args:
         df (_type_): _description_
         serch_columns - имя столбца с датой по которому идет поиск
-
     Returns:
         _type_: _description_
     """
@@ -1538,17 +1665,15 @@ def raznica_date_arhiv(df, serch_columns = 'календарь'):
         
         return list_date if len (list_date)>0 else None
     except Exception as ex_:
-        print(f'ошибка функции {send_mail.__name__} ошибка {ex_}')
+        print(f'ошибка функции {raznica_date_arhiv.__name__} ошибка {ex_}')
         
-        
+
 def protajka_stolbcov_v_arhivnoy_oborotke(df):
     """функция протяжки строк / столбцов в архивной оборотке
     добавляются даты сниз фреймв, протягиваются нужные (накопительные) столбцы / строки
     NAN заменяются на 0
-
     Args:
         df (_type_): df
-
     Returns:
         _type_: df
     """
@@ -1560,8 +1685,8 @@ def protajka_stolbcov_v_arhivnoy_oborotke(df):
         # стлбцы которые нужно протянуть 
         columns_nakopitelno_ffill = ['всего_зкз_с_уч_откз_и_выд_кред','всего_зкз_с_уч_откз_и_выд_нал','всего_зкз_с_уч_откз_и_выд_всего',
                                      'выручка_накоп', 'себестоимость_накоп', 'наценка', 'ам_на_складе_своб', 'ам_на_складе_клиент', 
-                                'склад_всего_ам', 'склад_конс_ам', 'ам_в_пути_выкуп', 'оборот_средства_без_демо', 'оборот_средства_без_демо_на_скл', 
-                                'оборот_средства_демо', 'имя_объекта', 'марка', 'марка', 'регион']
+                                'склад_всего_ам', 'склад_в_тч_демо_ам', 'склад_конс_ам', 'ам_в_пути_выкуп', 'оборот_средства_без_демо', 'оборот_средства_без_демо_на_скл', 
+                                'оборот_средства_демо', 'имя_объекта', 'марка', 'марка', 'регион'] # добавил 1 ст 'склад_в_тч_демо_ам'
         # протягиваем столбцы в df
         for i in columns_nakopitelno_ffill:
             df[i] = df[i].ffill()
@@ -1570,16 +1695,13 @@ def protajka_stolbcov_v_arhivnoy_oborotke(df):
         return df
     except Exception as ex_:
         print(f'ошибка функции {protajka_stolbcov_v_arhivnoy_oborotke.__name__} ошибка {ex_}')
-        
-        
+    
 def exception_result_korrekt(df, column_serch):
     """функция для обработки таблицы с ошибками
     убирает ошибки на листах в работе, склад - так как они рабочие
-
     Args:
         df (_type_): фрейм который обрабатываем
         column_serch (_type_): столбец
-
     Returns:
         _type_: _description_
     """
@@ -1589,13 +1711,12 @@ def exception_result_korrekt(df, column_serch):
         return df
     except Exception as ex_:
         print(f'Ошибка функции {exception_result_korrekt.__name__} {ex_}')
-        
-        
+
+
 def last_day_period(df_serch, year_search, month_search, reg, marka, column_search):
     """получаем результат на дату
     подается df, год, мес, регион, марка и по этим показателям ищем максимальную дату во врейме
     получив эту дату - опираясь на этот параметр снова ищем данные уже на конретную дату
-
     Args:
         df_serch (_type_): _description_
         year_search (int): _description_
@@ -1603,30 +1724,49 @@ def last_day_period(df_serch, year_search, month_search, reg, marka, column_sear
         reg (str): _description_
         marka (str): _description_
         column_search (str): _description_
-
     Returns:
         _type_: _description_
     """
-    # получаем максимальную дату
-    max_date = df_serch[(df_serch['календарь'].dt.year == year_search) &
-                (df_serch['календарь'].dt.month == month_search) &
-                (df_serch['марка'] == marka) &
-                (df_serch['регион']== reg)]['календарь'].max()
-
-    # получаем результат опираясь на максимальную дату
     try:
-        res = sum(list(df_serch[(df_serch['календарь'] == max_date) &
-                    (df_serch['марка'] == marka) &
-                    (df_serch['регион']== reg)][column_search]))
-
+        # 1. Преобразуем колонку 'календарь' в datetime, если она еще не datetime
+        if not pd.api.types.is_datetime64_any_dtype(df_serch['календарь']):
+            df_serch['календарь'] = pd.to_datetime(df_serch['календарь'], errors='coerce')
+        
+        # 2. Удаляем строки с NaT (некорректные даты)
+        df_serch = df_serch.dropna(subset=['календарь'])
+        
+        # 3. Получаем максимальную дату
+        max_date = df_serch[
+            (df_serch['календарь'].dt.year == year_search) &
+            (df_serch['календарь'].dt.month == month_search) &
+            (df_serch['марка'] == marka) &
+            (df_serch['регион'] == reg)
+        ]['календарь'].max()
+        
+        # 4. Проверяем, найдена ли дата
+        if pd.isna(max_date):
+            logger.warning(f'Дата не найдена для {year_search}-{month_search}, {marka}, {reg}')
+            return 0
+        
+        # 5. Получаем результат опираясь на максимальную дату
+        result = df_serch[
+            (df_serch['календарь'] == max_date) &
+            (df_serch['марка'] == marka) &
+            (df_serch['регион'] == reg)
+        ][column_search]
+        
+        # 6. Суммируем результат (если несколько записей)
+        res = sum(list(result)) if not result.empty else 0
+        
         return res
-    except:
+        
+    except Exception as ex_:
+        logger.error(f'Ошибка функции {last_day_period.__name__}: {ex_}')
         return 0
-    
+
 
 def last_day_period_2(df_serch, year_search, month_search, reg, marka, column_search):
     """получаем сумму столбца по году, месяцу, региону и марке
-
     Args:
         df_serch (_type_): _description_
         year_search (int): _description_
@@ -1634,7 +1774,6 @@ def last_day_period_2(df_serch, year_search, month_search, reg, marka, column_se
         reg (str): _description_
         marka (str): _description_
         column_search (str): _description_
-
     Returns:
         _type_: _description_
     """
@@ -1647,15 +1786,35 @@ def last_day_period_2(df_serch, year_search, month_search, reg, marka, column_se
     except:
         return 0
     
+
 def run_subbrocess_temp():
-    """запуск скрипта темпа после обратки первого класса
+    """запускает сабпроцесс парсинга ключевой ставки
     """
+    import sys
     try:
-        process_1 = subprocess.Popen(['py', links_main(fr"{script_dir}/file_links.txt", "run_temp")]) # запуск скрипта 
-        process_1.wait()
+        python_exe = sys.executable
+        logger.info(f"Использую Python: {python_exe}")  # Отладка
+        logger.info(f"Версия: {sys.version}")           # Отладка
+        name_process = "run_temp"
+        subprocess.run([python_exe, links_main(fr"{DIR}\file_links.txt", name_process)], check=True, shell=True)
+        logger.info(f'Процесс {name_process} выполнен')
     except Exception as ex_:
-        print(f'ошибка функции {run_subbrocess_temp.__name__} {ex_}')
-        LOG_inf(f'ошибка функции {run_subbrocess_temp.__name__}', 'ERROR', ex_)
+        logger.error(f'ошибка функции {run_subbrocess_temp.__name__} {ex_}')
+
+def run_subbrocess_temp_dir():
+    """запускает сабпроцесс парсинга ключевой ставки
+    """
+    import sys
+    try:
+        python_exe = sys.executable
+        logger.info(f"Использую Python: {python_exe}")  # Отладка
+        logger.info(f"Версия: {sys.version}")           # Отладка
+        name_process = "run_temp_dir"
+        subprocess.run([python_exe, links_main(fr"{DIR}\file_links.txt", name_process)], check=True, shell=True)
+        logger.info(f'Процесс {name_process} выполнен')
+    except Exception as ex_:
+        logger.error(f'ошибка функции {run_subbrocess_temp_dir.__name__} {ex_}')
+
 
 def date_prihoda_na_scl_np_po_skl(df, vin:str):
     """подтягивает данные по vin из склада
@@ -1673,42 +1832,300 @@ def date_prihoda_na_scl_np_po_skl(df, vin:str):
         return res
     except Exception as ex_:
         print(f'ошибка функции {date_prihoda_na_scl_np_po_skl.__name__} {ex_} входные данные {vin}')
-        LOG_inf(f'ошибка функции {date_prihoda_na_scl_np_po_skl.__name__}', 'ERROR', ex_)
-                 
-def arhivirovanie(link_directory_copy, link_directory_paste, pattern=''):
-    """для копирования файлов из одной директории в другую
-    import os
-    import shutil
+
+def rename_autocenry(autocentr:str)->str:
+    """меняет имя автоцентра на заданное
+
     Args:
-        link_directory_copy (_type_): директория откуда копируем
-        link_directory_paste (_type_): директория куда вставляем
-        pattern (str, optional): _description_. Defaults to ''. - паттерн для фильтрования определенных файлов '.txt' '.xls'
+        autocentr (_type_): _description_
+
+    Returns:
+        _type_: _description_
     """
     try:
-        directory_copy = link_directory_copy
-        directory_paste = link_directory_paste
-        # Получаем список файлов
-        files = [i for i in os.listdir(directory_copy) if i.endswith(pattern)]
-        print(f'Архивироание складов для сравнения')
-        for i in files:
-            print(f'{directory_copy}\{i} в {directory_paste}\{i}')
-            shutil.copy2(fr'{directory_copy}\{i}', fr'{directory_paste}\{i}')
-            LOG_inf(f'{directory_copy}\{i} в {directory_paste}\{i}', 'INFO')
+        if autocentr == 'HYUNDAIpi': return f'PAR_IMP'
+        elif autocentr == 'MAZDApi': return f'MAZDAimp'
+        elif autocentr == 'VOLKSWAGENpi': return f'VOLKSWAGENimp'
+        elif autocentr == 'PARimp': return f'PAR_IMP'
+        else: return autocentr
     except Exception as ex_:
-        print(f'ошибка функции {arhivirovanie.__name__} {ex_} входные данные {link_directory_copy, link_directory_paste, pattern}')
-        LOG_inf(f'ошибка функции {arhivirovanie.__name__}', 'ERROR', ex_)
+        print(f'ошибка функции {rename_autocenry.__name__} {ex_}')
+
+def test_connect_SQL_driver():
+    """функция проверки доступных драйверов для работы с SQL
+    от этого зависит какой драйвер будем использовать
+    на серверном пк s-kao3 новый ODBC Driver 18 for SQL Server
+    на рабочих пк ODBC Driver 13 for SQL Server
+    так же на серверном варинате в настройке нужно отключение 
+    проверки сертификатов SSL - это описывается в самих функциях подключения к SQL
+    """
+    try:
+        import pyodbc
+        wite_list_driver = ['ODBC Driver 13 for SQL Server', 'ODBC Driver 18 for SQL Server']
+        logger.info(f'🔄 Проверка достутных драйверов')
+
+        list_driver = []
+        for driver in pyodbc.drivers():
+            if 'SQL' in driver:
+                list_driver.append(driver)
+
+        logger.info(f'🛠️ Доступные драйвера SQL: {list_driver}')
+
+        if len(list_driver)>0:
+            found_drivers = []
+            for i in wite_list_driver:
+                if i in list_driver:
+                    found_drivers.append(i)
+            if len(found_drivers)>0:
+                logger.info(f'✅ Найден драйвер: {found_drivers[0]} соответсвующий белому списку: {wite_list_driver}')
+                return found_drivers[0]
+            else:
+                logger.error(f'⚠️ Нет драйверов соответсвующих белому списку: {wite_list_driver}')
+        else:
+            logger.error(f'⚠️ Доступные драйвера SQL не обнаружены')
+    except Exception as e:
+        logger.error(f'ошибка функции {test_connect_SQL_driver.__name__} {e}')
+
+def exception_column_SQL(df, server:str=SERVER_SQL, 
+                         database:str=DATABASE_SQL, 
+                         username:str=USERNAME_SQL, 
+                         password:str=PASSWORD_SQL, 
+                         driver='ODBC Driver 13 for SQL Server'):
     
+    """проверяет наличие ошибок в df при записи в SQL
+    перебирает каждый столбец и записывает в тестовую таблицу БД SQL
+    при возникновении ошибки в записи - возвращает имя столбца и ошибку
+    чаще такие ошибки вызван ытипом данных inf 
+    Args:
+        df (_type_): _description_
+    """
+    server = server
+    database = database
+    username = username
+    password = password
+    driver = test_connect_SQL_driver()
 
-arhivirovanie(links_main(fr"{script_dir}/file_links.txt", "copy_link_dir"), links_main(fr"{script_dir}/file_links.txt", "paste_link_dir"))
+    # connection_string = f'mssql+pyodbc://{username}:{password}@{server}/{database}?driver={driver}' # или f'mssql://{username}:{password}@{server}/{database}?driver={driver}'
+    # исправленный вариант
+    connection_string = (
+        f'mssql+pyodbc://{username}:{password}@{server}/{database}'
+        f'?driver={driver}&Encrypt=no'  # эта строка отключает проверку SSL сертификата
+    )
+    engine = sqlalchemy.create_engine(
+                connection_string,
+                echo=False, 
+                pool_pre_ping=True,
+                fast_executemany=True) # fast_executemany=True - можно удалить эту строчку / Она оптимизирует процедуру массовых вставок, значительно сокращая количество запросов к базе данных
 
+    # перебираем каждую колонку df и пытаемся записать
+    for i in df.columns:
+        try:
+            df[[i]].to_sql('df_ttt', con=engine, if_exists='replace', index=False)
+            logger.info(f'✅ столбец {i} - ок')
+        except Exception as ex_:
+            logger.error(f'❌ {exception_column_SQL.__name__} ОШИБКА в столбце {i}  возможно порблемы  стипом данных {ex_}')
+
+def exception_column_SQL_replace(df, server:str=SERVER_SQL, 
+                         database:str=DATABASE_SQL, 
+                         username:str=USERNAME_SQL, 
+                         password:str=PASSWORD_SQL, 
+                         driver='ODBC Driver 13 for SQL Server'):
+    
+    """проверяет наличие ошибок в df при записи в SQL исправляет при необходимости
+    перебирает каждый столбец и записывает в тестовую таблицу БД SQL
+    при возникновении ошибки в записи - возвращает имя столбца и ошибку
+    чаще такие ошибки вызван ытипом данных inf 
+    Args:
+        df (_type_): _description_
+    """
+    server = server
+    database = database
+    username = username
+    password = password
+    driver = test_connect_SQL_driver()
+
+    # connection_string = f'mssql+pyodbc://{username}:{password}@{server}/{database}?driver={driver}' # или f'mssql://{username}:{password}@{server}/{database}?driver={driver}'
+    # исправленный вариант
+    connection_string = (
+        f'mssql+pyodbc://{username}:{password}@{server}/{database}'
+        f'?driver={driver}&Encrypt=no'  # эта строка отключает проверку SSL сертификата
+    )
+    engine = sqlalchemy.create_engine(
+                connection_string,
+                echo=False, 
+                pool_pre_ping=True,
+                fast_executemany=True) # fast_executemany=True - можно удалить эту строчку / Она оптимизирует процедуру массовых вставок, значительно сокращая количество запросов к базе данных
+
+    # перебираем каждую колонку df и пытаемся записать
+    df = df
+    for i in df.columns:
+        try:
+            df[[i]].to_sql('df_ttt', con=engine, if_exists='replace', index=False)
+            logger.info(f'✅ столбец {i} - ок')
+        except Exception as ex_:
+            logger.error(f'{exception_column_SQL.__name__} ОШИБКА в столбце {i}  возможно порблемы  с типом данных {ex_}')
+            logger.error(f'{i} будет предпринята попытка найти inf как str и восстановить тип данных столбца')
+            start_type_column = str(df[i].dtype)
+            df[i] = df[i].astype(str)
+            df[i] = df[i].replace('inf', 0)
+            if fnc_type_column(start_type_column) != 'datetime':
+                df[i] = df[i].astype(fnc_type_column(start_type_column))
+            elif fnc_type_column(start_type_column) == 'datetime':
+                df[i] = pd.to_datetime(df[i])
+
+    return df
+
+
+def connect_bd_SQL(server:str=SERVER_SQL, 
+                   database:str=DATABASE_SQL, 
+                   username:str=USERNAME_SQL, 
+                   password:str=PASSWORD_SQL, 
+                   driver:str='ODBC Driver 13 for SQL Server'):
+    """функция подключения к бд SQL
+
+    Returns:
+        _type_: _description_
+    """
+    # import sqlalchemy
+    # Замените значения на ваши
+    # если серит ошибками - проверить данные по столбцам ибо в наценке оборотки было inf и из-за этого серило ошибки
+    server = server
+    database = database
+    username = username
+    password = password
+    driver = test_connect_SQL_driver() #'ODBC Driver 13 for SQL Server' # моддет работать просто 'SQL Server'
+
+    try:
+        # connection_string = f'mssql+pyodbc://{username}:{password}@{server}/{database}?driver={driver}' # или f'mssql://{username}:{password}@{server}/{database}?driver={driver}'
+        connection_string = (
+                f'mssql+pyodbc://{username}:{password}@{server}/{database}'
+                f'?driver={driver}&Encrypt=no'  # эта строка отключает проверку SSL сертификата
+            )
+        engine = sqlalchemy.create_engine(
+                    connection_string,
+                    echo=False, 
+                    pool_pre_ping=True,
+                    fast_executemany=True) 
+        # fast_executemany=True - можно удалить эту строчку / Она оптимизирует процедуру массовых вставок, 
+        # значительно сокращая количество запросов к базе данных, ускоряя запись
+        logger.info(f'✅ соединение с bd SQL - установлено')
+        return engine
+    except Exception as ex_:
+        logger.error(f'❌ Проблемы с подключением к SQL')
+        logger.error(f'❌ ошибка функции {connect_bd_SQL.__name__} ошибка {ex_}')
+
+
+def fnc_type_column(word):
+    """определяет тип столбцов
+
+    Args:
+        word (_type_): _description_
+
+    Returns:
+        _type_: _description_
+    """
+    try:
+        word = str(word)
+        if 'datetime' in word: return 'datetime'
+        elif 'float' in word: return 'float'
+        elif 'int' in word: return 'int'
+        elif 'object' in word: return 'str'
+    except Exception as ex_:
+            print(f' ошибка функции {fnc_type_column.__name__}  {ex_}')
+
+def rename_autocenry_st_2(df, search_col:str, search_name:str, result_col:str)->str:
+    """_summary_
+
+    Args:
+        df (_type_): фрейм по которому ищем автоцентры для переименования
+        search_col (_type_): колока в которой ищем
+        search_name (_type_): имя которое ищем
+        result_col (_type_): колонка по которой получем результат
+
+    Returns:
+        str: новое_имя 
+    """
+    try:
+        res_list = list(df[df[search_col]==search_name][result_col])
+        if len(res_list)>0:
+            return res_list[0]
+        else:
+            return search_name
+    except Exception as ex_:
+        print(f'ошибка функции {rename_autocenry_st_2.__name__} {ex_}')   
+
+
+def clean_string(text):
+    import re
+    text = str(text).upper()
+    cleaned = re.sub(r'[^a-zA-Zа-яА-ЯёЁ0-9\s]', ' ', str(text))
+    cleaned = re.sub(r'\s+', ' ', cleaned)
+    return cleaned.strip()
+   
+def paravka_dat_vidachy_PAR_IMP(klient, data_polnoy_oplaty, datayidachy_fact, key):
+    try:
+        from datetime import datetime
+        date_kostracii = "2026-03-01"
+        date_kostracii = datetime.strptime(date_kostracii, "%Y-%m-%d")
+        detect_data_polnoy_oplaty = None
+        if str(data_polnoy_oplaty) != 'nan' and isinstance(data_polnoy_oplaty, (datetime)): # проверяем на наличие даты полной оплаты и ее типа
+            # print(data_polnoy_oplaty)
+            data_polnoy_oplaty_d = data_polnoy_oplaty
+            detect_data_polnoy_oplaty = True
+        elif str(data_polnoy_oplaty) != 'nan' and not isinstance(data_polnoy_oplaty, (datetime)): # проверяем на наличие даты полной оплаты и ее типа если строка - тогда приводим к datetime
+            detect_data_polnoy_oplaty = True
+            data_polnoy_oplaty_d = datetime.strptime(data_polnoy_oplaty, "%Y-%m-%d")
+            # print(data_polnoy_oplaty_d)
+        elif str(data_polnoy_oplaty) == 'nan':
+            detect_data_polnoy_oplaty = False
+            # print(f'нет даты')
+        # в блоке выше разобрались с датами и определелили есть дата полной отплаты или нет
+        # в блоке ниже проверяем условия и изменяем даты
+        if 'ООО СИМ' in clean_string(klient) and key == 'HYUNDAIpi_MSK':
+            if detect_data_polnoy_oplaty == True: 
+                if data_polnoy_oplaty_d >= date_kostracii: return data_polnoy_oplaty
+                else: return datayidachy_fact
+            elif detect_data_polnoy_oplaty == False: return data_polnoy_oplaty
+        else:
+            return datayidachy_fact
+    except Exception as e:
+        print(f'ошибка функции - {paravka_dat_vidachy_PAR_IMP.__name__} параметры {klient, date_kostracii, data_polnoy_oplaty, datayidachy_fact, key} - {e}')
+        print(data_polnoy_oplaty, data_polnoy_oplaty==None, str(data_polnoy_oplaty)=='nan', type(data_polnoy_oplaty))
+
+
+def search_demo_in_klient(name_klient, name_list): # 17.04.2026 - тест вариант
+    """ищет признак демо в клиенте и возвращает 'DEMO_FUNC' склеивая с признаком с листа -  если признак найден
+    иначе возвращает имя листа
+    применяется к столбцу - с_листа
+    не применять к ОВП
+    Args:
+        name_klient (_type_): _description_
+    """
+    try:
+        filtr_ = ['ТЕСТ', 'DEM', 'ДЕМ', 'DEMO_FUNC']
+        if any([i in name_list for i in filtr_]):                       # если имя листа содержит признак демо - оставляем как есть
+            return name_list
+        else:                                                           # пытаемся найти демо в клиенте
+            name_klient_2 = str(name_klient).upper()
+            lst_name = ['DEMO', 'ДЕМО', 'ТЕСТ-ДРАЙВ', 'TEST-DRIVE']
+            if any([i in name_klient_2 for i in lst_name]):             # если признак демо найден - добавляем его к имени листа
+                return str(name_list).strip()+'_DEMO_FUNC'
+            else: return name_list
+    except Exception as e:
+        print(f'ошибка функции - {search_demo_in_klient.__name__} параметры {name_klient, name_list} - {e}')
 
 # df с ключами поиска используются в классе ниже
-df_keys_oplata = pd.read_excel(links_main(fr"{script_dir}/file_links.txt", "keys_columns"), sheet_name='ОПЛАТА')
-df_keys_auto = pd.read_excel(links_main(fr"{script_dir}/file_links.txt", "keys_columns"), sheet_name='АВТО')
-df_keys_sclad = pd.read_excel(links_main(fr"{script_dir}/file_links.txt", "keys_columns"), sheet_name='СКЛАД')
-df_keys_arhiv = pd.read_excel(links_main(fr"{script_dir}/file_links.txt", "keys_columns"), sheet_name='АРХИВ')
-df_keys_demo = pd.read_excel(links_main(fr"{script_dir}/file_links.txt", "keys_columns"), sheet_name='ДЕМО')
-df_keys_neprofil = pd.read_excel(links_main(fr"{script_dir}/file_links.txt", "keys_columns"), sheet_name='НЕПРОФИЛЬ')
+logger.info(f'получаем df с ключами поиска используются в классе')   
+try:
+    df_keys_oplata = pd.read_excel(links_main(fr"{DIR}\file_links.txt", "keys_columns"), engine='calamine', sheet_name='ОПЛАТА')
+    df_keys_auto = pd.read_excel(links_main(fr"{DIR}\file_links.txt", "keys_columns"), engine='calamine', sheet_name='АВТО')
+    df_keys_sclad = pd.read_excel(links_main(fr"{DIR}\file_links.txt", "keys_columns"), engine='calamine', sheet_name='СКЛАД')
+    df_keys_arhiv = pd.read_excel(links_main(fr"{DIR}\file_links.txt", "keys_columns"), engine='calamine', sheet_name='АРХИВ')
+    df_keys_demo = pd.read_excel(links_main(fr"{DIR}\file_links.txt", "keys_columns"), engine='calamine', sheet_name='ДЕМО')
+    df_keys_neprofil = pd.read_excel(links_main(fr"{DIR}\file_links.txt", "keys_columns"), engine='calamine', sheet_name='НЕПРОФИЛЬ')
+except Exception as ex_:
+        logger.error(f'❌ не удалось получить df с ключами поиска {ex_}')
+
 
 
 class Manufacturing_df_sborka:
@@ -1772,32 +2189,26 @@ class Manufacturing_df_sborka:
                     for i in keys_import_file_columns:                                                                                          # прходим по ключам и вытаскиваем названия столбцов какие нужно найти и переименовать
                         try:
                             df_work = df_work.rename(columns={list(keys_import_file[i])[0] : i}) 
-
                         except Exception as ex_:
-                            print(f'{i} ошибка {ex_}')
+                            logger.error(f'{i} ошибка {ex_}')
     
                     for i in enumerate(df_work.columns):                                                                                        # ищем дубликаты имен столбцов и переименовываем добавляя индекс в конце
                         if i[1] in df_work.columns[:i[0]]:
-                            print(f'найден дубликат столбца {i[1]} в листе {list_name} по ссылке {ssulka_dlya_obrabotky} переименован в {i[1]}_{i[0]}')
+                            logger.info(f'найден дубликат столбца {i[1]} в листе {list_name} по ссылке {ssulka_dlya_obrabotky} переименован в {i[1]}_{i[0]}')
                             df_work = df_work.rename(columns={i[1]:f'{i[1]}_{i[0]}'})
-                    
                     
                     # df_work = df_work.astype(str)
                     
                     for i in keys_import_file_columns:                                                                                          # проверяем наличие нужных столбцов во фрейме и если таковых нет - добавляем
                         if i not in df_work.columns:
                             df_work[i] = '0'
-                     
                            
                     df_work = df_work[keys_import_file_columns]                                                                                 # оставляем только нужные нам столбцы
-                    
-                    
                     try:
                         df_work = df_work[~df_work['vin'].str.contains("|".join(['^VIN']), case=False, na=False)]                                 # удаляем строки если в книге было несколько строк столбцов/шапок
                     except:
-                        df_work
-                    
-                    
+                        df_work 
+            
                     df_work['принадлежность'] = prinadlejnost                                                                                   # добавляем столбец с принадлежностью
                     df_work['регион'] = region                                                                                                  # добавляем столбец с регионом
                     df_work['ключ'] = key_unique                                                                                                # добавляем столбец с ключом
@@ -1903,8 +2314,7 @@ class Manufacturing_df_sborka:
                     if i in  self.columns_lower_registr:                                                                                            # если имя столбца есть в списке понижаем регистр
                         df_registr[i] = df_registr[i].apply(lambda x: str(x).strip().lower())
         except Exception as ex_:
-                print(f'{self.uniq_name_autocentr} ошибка {ex_} функция - {self.lower_registr.__name__}')
-            
+                logger.error(f'❌ {self.uniq_name_autocentr} ошибка {ex_} функция - {self.lower_registr.__name__}')
 
     def result_date_update_cl(self):
         """получаем метаданные / дату обновления файла
@@ -1912,26 +2322,43 @@ class Manufacturing_df_sborka:
         try:
             self.date_update = result_date_update(self.uniq_name_autocentr, 'date_update')
         except Exception as ex_:
-                print(f'{self.uniq_name_autocentr} ошибка {ex_} функция - {self.result_date_update_cl.__name__}')
+                logger.error(f'{self.uniq_name_autocentr} ошибка {ex_} функция - {self.result_date_update_cl.__name__}')
 
-    
+    def fn_paravka_dat_vidachy_PAR_IMP(self):
+        """ хуйня с параллельным импортом который передаем в Ярославль """
+        if self.uniq_name_autocentr == 'HYUNDAIpi_MSK':
+            try:
+                self.df_np_auto['дата_выдачи_факт'] = self.df_np_auto.apply(lambda x: paravka_dat_vidachy_PAR_IMP(x.клиент, x.дата_полной_оплаты_факт, x.дата_выдачи_факт, x.ключ), axis=1)
+            except Exception as ex_:
+                    logger.error(f'❌ {self.uniq_name_autocentr} ошибка {ex_} функция - {self.fn_paravka_dat_vidachy_PAR_IMP.__name__}')
+
+    def fn_search_demo_in_klient(self): # 17.04.2026 - тест вариант
+         """ поиск демо в клиенте 
+         если имя листа не имеет отношения к демо - пытаемся найти демо в вклинете и вернуть сцепку имени листа с признаком DEMO_FUNC"""
+         try:
+            if 'OVP' not in self.uniq_name_autocentr:
+                self.df_sclad['с_листа'] = self.df_sclad.apply(lambda x: search_demo_in_klient(x.клиент, x.с_листа), axis=1)
+         except Exception as ex_:
+                    logger.error(f'❌ {self.uniq_name_autocentr} ошибка {ex_} функция - {self.fn_search_demo_in_klient.__name__}')
   
     def save_object_class_excel(self):
         """функция сохранения промежуточного объекта класса с тремя собранными фреймами ОПЛАТА, АВТО, СКЛАД
         """
         try:
             # записываем в файл и если лист существует, то меняем лист
-            with pd.ExcelWriter(rf'{links_main(fr"{script_dir}/file_links.txt", "save_file_sborka")}\{self.uniq_name_autocentr}.xlsx', 
+            link_drc = links_main(fr"{DIR}\file_links.txt", "save_file_sborka")
+            with pd.ExcelWriter(fr'{link_drc}\{self.uniq_name_autocentr}.xlsx', 
                                 engine='xlsxwriter', date_format = 'dd.mm.yyyy', datetime_format='dd.mm.yyyy') as writer:
             # Записать ваш DataFrame в файл на листы
-                self.df_np_oplata.to_excel(writer, 'oplata')
-                self.df_np_auto.to_excel(writer, 'auto')
-                self.df_sclad.to_excel(writer, 'sclad')
+                self.df_np_oplata.to_excel(writer, sheet_name='oplata')
+                self.df_np_auto.to_excel(writer, sheet_name='auto')
+                self.df_sclad.to_excel(writer, sheet_name='sclad')
         except Exception as ex_:
-                print(f'{self.uniq_name_autocentr} ошибка {ex_} функция - {self.save_object_class_excel.__name__} не удалось записать данные в файл')
-            
+                logger.error(f'❌ {self.uniq_name_autocentr} ошибка {ex_} функция - {self.save_object_class_excel.__name__} не удалось записать данные в файл')
+
 
     
+
     def fnc_auto(self):
         """функция запуска функций
         при ручной проврке и отключении не забывать отключать сохраниение листов в функции save_object_class_excel
@@ -1941,45 +2368,44 @@ class Manufacturing_df_sborka:
         self.sclad_predobrabotka_all()
         self.lower_registr()
         self.result_date_update_cl()
+        self.fn_paravka_dat_vidachy_PAR_IMP()
+        self.fn_search_demo_in_klient()        # 17.04.2026 - тест вариант - раскомментировать прогнать и показать Роме
         self.save_object_class_excel()
-        
-        
-# наполняем словарь базами данных создавая экземпляры класса
+
+
+
+logger.info(f'🔄 наполняем словарь базами данных создавая экземпляры класса Manufacturing_df_sborka')  
 catalog_df = {} # словарь со всеми базами
 
 catalog_exception_key = [] # ключи ошибок
 count_bd = len(df_main.ключ.unique())
 for i in df_main.ключ.unique():
     try:
-        print(f'{i}-----------------------------------')
-        LOG_inf(f'Создаем объект класса {Manufacturing_df_sborka.__name__}', 'INFO', i)
+        logger.info(f'{i}-----------------------------------')
+        logger.info(f'✅ Создаем объект класса {Manufacturing_df_sborka.__name__} {i}')
         catalog_df[i] = Manufacturing_df_sborka(i, df_main[df_main['ключ']==i])
         
         count_bd-=1
-        print(f'Осталось создать {count_bd} объектов класса')
-        LOG_inf(f'Осталось создать {count_bd} объектов класса', 'INFO')
+        logger.info(f'🚀 Осталось создать {count_bd} объектов класса')
     except Exception as ex_:
         catalog_exception_key.append(i)
-        print(f'ошибка по ключу {i} будет попытка перезапуска')
-        LOG_inf(f'ошибка по ключу {i} будет попытка перезапуска', 'ERROR')
+        logger.error(f'❌ ошибка по ключу {i} будет попытка перезапуска')
         
 if len(catalog_exception_key)>0:
     for i in catalog_exception_key:
         try:
-            print(f'Повторная попытка создать объъект класса')
-            print(f'{i}-----------------------------------')
+            logger.info(f'✅ Повторная попытка создать объъект класса')
+            logger.info(f'{i}-----------------------------------')
             catalog_df[i] = Manufacturing_df_sborka(i, df_main[df_main['ключ']==i])
         except Exception as ex_:
             print(f'i {ex_}')
-            LOG_inf(f'повторная ошибка {i} будет попытка перезапуска {ex_}', 'ERROR')
-        
-        
-
-LOG_inf(f'Создано объектов класса {Manufacturing_df_sborka.__name__} в кол-ве {len(catalog_df)}', 'INFO')
+            logger.error(f'❌ повторная ошибка {i} будет попытка перезапуска {ex_}')
+logger.info(f'✅ Создано объектов класса {Manufacturing_df_sborka.__name__} в кол-ве {len(catalog_df)}')    
 
 
 # добавление демо авто из склада в NP и Оплата по Саратову (КОСТЫЛИ САРАТОВА)
-LOG_inf(f'добавление демо авто из склада в NP и Оплата по Саратову (КОСТЫЛИ САРАТОВА)', 'INFO')
+
+logger.info(f'добавление демо авто из склада в NP и Оплата по Саратову (КОСТЫЛИ САРАТОВА)')
 try:
     copy_object_class = copy.deepcopy(catalog_df['OMODA_SAR'])
     columns_intersection_np_sclad = set(copy_object_class.df_np_auto.columns).intersection(copy_object_class.df_sclad.columns) # столбцы пересекаются
@@ -2031,18 +2457,16 @@ try:
     catalog_df['OMODA_SAR'].df_np_oplata = copy.deepcopy(res_new_oplata)
 
 except Exception as ex_:
-    print(f'ОШИБКА {ex_} не удалось добавить добавление демо авто из склада в NP и Оплата по Саратову (КОСТЫЛИ САРАТОВА) {ex_}')
-    LOG_inf(f'добавление демо авто из склада в NP и Оплата по Саратову (КОСТЫЛИ САРАТОВА)', 'ERROR')
-    
-    
-# запускать после отработки Manufacturing_df_sborka
+    logger.error(f'ОШИБКА {ex_} не удалось добавить добавление демо авто из склада в NP и Оплата по Саратову (КОСТЫЛИ САРАТОВА) {ex_}')
+
+
 def OMODA_JAECOO_SAR():
     """функция заберает из каталога catalog_df OMODA_SAR
     на основании его копии создает два объекта (JAECOO__SAR OMODA__SAR)
     фильтрует данные в  (df_np_auto, df_np_oplata, df_sclad) на 'JAECOO', 'OMODA'
     создает новые объекты по маркам 'JAECOO', 'OMODA'
     """
-    LOG_inf(f'{OMODA_JAECOO_SAR.__name__}', 'INFO')
+    logger.info(f'{OMODA_JAECOO_SAR.__name__} создает новые объекты по маркам JAECOO OMODA')
     try:
         for i in ['JAECOO', 'OMODA']:
             catalog_df[f'{i}__SAR'] = copy.deepcopy(catalog_df['OMODA_SAR'])
@@ -2050,18 +2474,13 @@ def OMODA_JAECOO_SAR():
             catalog_df[f'{i}__SAR'].df_np_oplata =  catalog_df[f'{i}__SAR'].df_np_oplata[catalog_df[f'{i}__SAR'].df_np_oplata['модель'].str.contains("|".join([i]), case=False)]
             catalog_df[f'{i}__SAR'].df_sclad = catalog_df[f'{i}__SAR'].df_sclad[catalog_df[f'{i}__SAR'].df_sclad['модель'].str.contains("|".join([i]), case=False)]
             
-        # удаляем объект из каталога так как дальше у нас все распределено
         del catalog_df['OMODA_SAR']
     except Exception as ex_:
-        print(f'ошибка функции {OMODA_JAECOO_SAR.__name__} {ex_}')
-        LOG_inf(f'ошибка функции {OMODA_JAECOO_SAR.__name__} {ex_}', 'ERROR')
-        
-        
+        logger.error(f'ошибка функции {OMODA_JAECOO_SAR.__name__} {ex_}')
+              
 OMODA_JAECOO_SAR()
 
-
-# Разделяем ОВП ЯР на Яр и РЫБИНСК
-LOG_inf(f'Разделяем ОВП ЯР на Яр и РЫБИНСК', 'INFO')
+logger.info(f'Разделяем ОВП ЯР на Яр и РЫБИНСК')
 try:
     catalog_df['OVP__YAR'] = copy.deepcopy(catalog_df['OVP_YAR'])
     catalog_df['OVP__YAR'].df_np_oplata = catalog_df['OVP__YAR'].df_np_oplata[catalog_df['OVP__YAR'].df_np_oplata['локация'].str.contains("|".join(['Ярославль']), case=False, na=False)]
@@ -2074,12 +2493,9 @@ try:
     catalog_df['OVP__RYB'].df_sclad = catalog_df['OVP__RYB'].df_sclad[~catalog_df['OVP__RYB'].df_sclad['площадка'].str.contains("|".join(['Ярославль']), case=False, na=False)]
     del catalog_df['OVP_YAR'] # удаляем исходник, так как разделили на дву состоявляющих
 except Exception as ex_:
-    print(f'ошибка {ex_} не удалось разделить ОВП ЯР на Яр и РЫБИНСК')
-    LOG_inf(f'ошибка {ex_} не удалось разделить ОВП ЯР на Яр и РЫБИНСК', 'ERROR')
-    
-    
-# разделяем ДЖЕТУР МСК на ДЖЕТУР И НЕПРОФИЛЬ
-LOG_inf(f'разделяем ДЖЕТУР МСК на ДЖЕТУР И НЕПРОФИЛЬ', 'INFO')
+    logger.error(f'ошибка {ex_} не удалось разделить ОВП ЯР на Яр и РЫБИНСК')
+
+logger.info(f'разделяем ДЖЕТУР МСК на ДЖЕТУР И НЕПРОФИЛЬ')
 try:
     catalog_df['JETOUR_MSK'] = copy.deepcopy(catalog_df['JETOUR_vved_MSK'])
     catalog_df['JETOUR_MSK'].df_sclad = catalog_df['JETOUR_MSK'].df_sclad[~catalog_df['JETOUR_MSK'].df_sclad['с_листа'].str.contains("|".join(['НЕПРОФИЛЬ']), case=False, na=False)]
@@ -2095,12 +2511,10 @@ try:
     catalog_df['JETOURneprof_MSK'].df_np_oplata = catalog_df['JETOURneprof_MSK'].df_np_oplata[catalog_df['JETOURneprof_MSK'].df_np_oplata['id'].str.contains("|".join(id_zakaza_jetour_neprof), case=False, na=False)]
     del catalog_df['JETOUR_vved_MSK'] # удаляем исходник, так как разделили на дву состоявляющих
 except Exception as ex_:
-    print(f'ошибка {ex_} не удалось разделить ДЖЕТУР МСК на ДЖЕТУР И НЕПРОФИЛЬ')
-    LOG_inf(f'ошибка {ex_} не удалось разделить ДЖЕТУР МСК на ДЖЕТУР И НЕПРОФИЛЬ', 'ERROR')
-    
-    
+    logger.error(f'ошибка {ex_} не удалось разделить ДЖЕТУР МСК на ДЖЕТУР И НЕПРОФИЛЬ')
+
 # разделяем МАЗДУ МСК на МАЗДУ И NEXT
-LOG_inf(f'разделяем МАЗДУ МСК на МАЗДУ И NEXT', 'INFO')
+logger.info(f'разделяем МАЗДУ МСК на МАЗДУ И NEXT')
 try:
     catalog_df['MAZDA_MSK'] = copy.deepcopy(catalog_df['MAZDA_vved_MSK'])
     catalog_df['MAZDA_MSK'].df_sclad = catalog_df['MAZDA_MSK'].df_sclad[~catalog_df['MAZDA_MSK'].df_sclad['с_листа'].str.contains("|".join(['NEXT']), case=False, na=False)]
@@ -2117,30 +2531,52 @@ try:
     catalog_df['MAZDAnext_MSK'].df_np_oplata = catalog_df['MAZDAnext_MSK'].df_np_oplata[catalog_df['MAZDAnext_MSK'].df_np_oplata['id'].str.contains("|".join(id_zakaza_MAZDA_next), case=False, na=False)]
     del catalog_df['MAZDA_vved_MSK'] # удаляем исходник, так как разделили на дву состоявляющих
 except Exception as ex_:
-    print(f'ошибка {ex_} не удалось разделить МАЗДУ МСК на МАЗДУ И NEXT')
-    LOG_inf(f'ошибка {ex_} не удалось разделить МАЗДУ МСК на МАЗДУ И NEXT', 'ERROR')
-    
-    
-LOG_inf(f'сохраняем сборку NP 1 класса для ТЕМПА', 'INFO')
+    logger.error(f'ошибка {ex_} не удалось разделить МАЗДУ МСК на МАЗДУ И NEXT')
+
+logger.info(f'собираем сборку NP 1 класса для ТЕМПА в один файл')
 try:
     temp_file = pd.concat([catalog_df[i].df_np_auto for i in catalog_df.keys()])
-    temp_file.to_excel(links_main(fr"{script_dir}/file_links.txt", "save_temp"))
+    # temp_file.to_excel(links_main(fr"{DIR}\file_links.txt", "save_temp")) # можно удалить так как сохраняет в SQL
 except Exception as ex_:
-    print(f'ошибка {ex_} не удалось сохранить сборку NP 1 класса для ТЕМПА')
-    LOG_inf(f'ошибка {ex_} не удалось сохранить сборку NP 1 класса для ТЕМПА', 'ERROR')
-    
+    logger.error(f'ошибка {ex_} не удалось создать сборку NP 1 класса для ТЕМПА')
 
-LOG_inf(f'запускаем субпроцесс по обработке NP 1 класса для ТЕМПА', 'INFO')
+
+logger.info(f'сохраняем сборку NP 1 класса для ТЕМПА в SQL')
+temp_file_sql = temp_file.copy()
 try:
-    run_subbrocess_temp()
+    name_file_in_bd_SQL = 'first_class_oborotka_for_temp'
+    temp_file_sql = temp_file_sql.replace([np.inf, -np.inf], np.nan)
+    temp_file_sql.to_sql(name_file_in_bd_SQL, con=connect_bd_SQL(), if_exists='replace', index=False)
+    logger.info(f'✅ сборка записана в SQL под именем: {name_file_in_bd_SQL}')
 except Exception as ex_:
-    print(f'ошибка {ex_} не удалось запустить  субпроцесс по обработке NP 1 класса для ТЕМПА')
-    LOG_inf(f'ошибка {ex_} не удалось запустить  субпроцесс по обработке NP 1 класса для ТЕМПА', 'ERROR')
+    logger.info(f'❌ в данных temp_file_sql не обнаружено значений inf - пробуем запистаь данные в SQL')
+    try:
+        temp_file_sql.to_sql(name_file_in_bd_SQL, con=connect_bd_SQL(), if_exists='replace', index=False)
+        logger.info(f'✅ сборка записана в SQL под именем: {name_file_in_bd_SQL}')
+    except:
+        exception_column_SQL(temp_file_sql)
 
+logger.info(f'запускаем субпроцесс ТЕМП, статус разрешения на запуск : {RUN_TEMP}')
+try:
+    if RUN_TEMP:
+        run_subbrocess_temp()
+    else:
+        logger.info(f'Процесс не запущен, так как не получено разрешение на запуск : {RUN_TEMP}') 
+except Exception as ex_:
+    logger.error(f'❌ ошибка {ex_} не удалось запустить  субпроцесс ТЕМП')
+
+logger.info(f'запускаем субпроцесс ТЕМП_ДИР, статус разрешения на запуск : {RUN_TEMP}')
+try:
+    if RUN_TEMP:
+        run_subbrocess_temp_dir()
+    else:
+       logger.info(f'Процесс не запущен, так как не получено разрешение на запуск : {RUN_TEMP}') 
+except Exception as ex_:
+    logger.error(f'❌ ошибка {ex_} не удалось запустить  субпроцесс ТЕМП_ДИР')
 
 
 class Manufacturing_df_predobrabotka:
-    def __init__(self, manufacturing_df_sborka, name_Manufacturing_df_sborka, starter:True or False = None, save_excel: True or False = None):
+    def __init__(self, manufacturing_df_sborka, name_Manufacturing_df_sborka, starter:True | False = None, save_excel: True | False = None):
         """промежуточный класс предобработки данных
         подготавливает данные для рассчета
 
@@ -2169,16 +2605,12 @@ class Manufacturing_df_predobrabotka:
        
     @staticmethod
     def new_df_except(df):
-        
         """шаблонный df с фикс данными
-
         Args:
             df (_type_): _description_
-
         Returns:
             _type_: _description_
         """
-        
         df_except = pd.DataFrame()
         df_except['с_листа'] = df['с_листа']
         df_except['регион'] = df['регион']
@@ -2214,7 +2646,7 @@ class Manufacturing_df_predobrabotka:
         try:
             self.except_kum = pd.concat(except_list)
         except Exception as ex_:
-            print(f' Ошибка конкатинции функции {self.excepts_date.__name__}')
+            logger.error(f'❌ Ошибка конкатинции функции {self.excepts_date.__name__}')
         
     
         
@@ -2233,7 +2665,15 @@ class Manufacturing_df_predobrabotka:
                     frame[i] = frame[i].apply(lambda x: shablon_date_test(x))  # проверяем даты по шаблону - очищаем и возвращаем только дату
                 if 'vin' in i:
                     frame[i] = frame[i].apply(lambda x: str(x).strip())         # удаляем лишние пробелы в vin 
-        
+
+    def korrectirovka_formy_oplaty_OVP(self): # 07.11.25
+        try:
+            if 'OVP_' in self.name_object_class:
+                self.df_np_auto['форма_оплаты'] = self.df_np_auto['комментарий'].apply(lambda x: forma_pay(x) if 'nan' not in str(x) else 'нал')
+                self.df_sclad['форма_оплаты'] = self.df_sclad['komment'].apply(lambda x: forma_pay(x) if 'nan' not in str(x) else 'нал')
+        except Exception as ex_:
+            logger.error(f'❌ Ошибка конкатинции функции {self.karrectirovka_formy_oplaty_OVP.__name__} {ex_}')
+
         
     def pravka_type_dataframe(self):
         """преобразует столлбцы дат и чисел
@@ -2243,7 +2683,7 @@ class Manufacturing_df_predobrabotka:
             self.df_np_oplata, self.df_np_auto, self.df_sclad = datetime_columns_convertor(self.df_np_oplata), datetime_columns_convertor(self.df_np_auto), datetime_columns_convertor(self.df_sclad)
             self.df_np_oplata, self.df_np_auto, self.df_sclad = numeric_columns_convertor(self.df_np_oplata), numeric_columns_convertor(self.df_np_auto), numeric_columns_convertor(self.df_sclad)
         except Exception as ex_:
-            print(f'ошибка функции {self.pravka_type_dataframe.__name__}')
+            logger.error(f'❌ ошибка функции {self.pravka_type_dataframe.__name__}')
 
 
     def poverka_date_prihoda_np_po_sl(self):    # 10.07.2025 
@@ -2260,7 +2700,24 @@ class Manufacturing_df_predobrabotka:
             df_except = df_except[self.white_list_columns_except_logist]
             self.except_kum = pd.concat([self.except_kum ,df_except])
         except:
-            print(f'ошибка функции {self.poverka_date_prihoda_np_po_sl.__name__}')  
+            logger.error(f'❌ ошибка функции {self.poverka_date_prihoda_np_po_sl.__name__}')  
+
+
+    def poverka_date_prihoda_scl_po_np(self):    # 19.08.2025 
+        """если в NP есть дата прихода на склад - то сравниваем ее
+        с датой прихода на склад в файле склад
+        """
+        try:
+            df_except = copy.deepcopy(self.df_sclad)
+            df_except['ошибка'] = df_except.apply(lambda x: (f'{x.vin} дата прихода в SCLAD {x.дата_прихода_на_склад} не соответствует NP {date_prihoda_na_scl_np_po_skl(self.df_np_auto, x.vin)}' 
+                                                             if (len(str(x.дата_прихода_на_склад))>5 and str(x.vin) in list(self.df_np_auto['vin']))
+                                                             and x.дата_прихода_на_склад not in date_prihoda_na_scl_np_po_skl(self.df_np_auto, x.vin) 
+                                                             and len(str(x.vin))>5 else None), axis=1)
+            df_except = df_except[df_except['ошибка'].notna()]
+            df_except = df_except[self.white_list_columns_except_logist]
+            self.except_kum = pd.concat([self.except_kum ,df_except])
+        except Exception as ex_:
+            logger.error(f'❌ ошибка функции {self.poverka_date_prihoda_scl_po_np.__name__} {ex_}') 
             
     
     def kostraciva_po_date(self):
@@ -2277,8 +2734,8 @@ class Manufacturing_df_predobrabotka:
             self.df_sclad = pd.concat([skl, skl1])
             self.df_np_oplata = opl
             
-        except:
-            print(f'ошибка функции {self.kostraciva_po_date.__name__}')
+        except Exception as ex_:
+            logger.error(f'❌ ошибка функции {self.kostraciva_po_date.__name__} {ex_}')
 
     
     def proverka_np_date(self): # добавить функцию исправления 
@@ -2311,7 +2768,7 @@ class Manufacturing_df_predobrabotka:
         try:
             self.df_sclad['форма_оплаты'] = self.df_sclad.apply(lambda x:  korrekt_forma_oplaty(self.df_np_auto, x.vin, x.форма_оплаты, 'дата_выдачи_факт', 'форма_оплаты'), axis=1)
         except Exception as ex_:
-            print(f'{self.name_object_class} ошибка {ex_} функция - {self.pravka_formy_oplaty.__name__}')
+            logger.error(f'❌ {self.name_object_class} ошибка {ex_} функция - {self.pravka_formy_oplaty.__name__}')
         
 
     def proverka_otkaza(self):
@@ -2327,7 +2784,7 @@ class Manufacturing_df_predobrabotka:
             df_except = df_except[self.white_list_columns_except_logist]
             self.except_kum = pd.concat([self.except_kum ,df_except])
         except Exception as ex_:
-            print(f'{self.name_object_class} ошибка {ex_} функция - {self.proverka_otkaza.__name__}')
+            logger.error(f'❌ {self.name_object_class} ошибка {ex_} функция - {self.proverka_otkaza.__name__}')
             None
         
     def pravka_otkaza(self): # добавить в ошибки для логистов proverka_pravka_otkaza - готово
@@ -2337,7 +2794,7 @@ class Manufacturing_df_predobrabotka:
         try:
             self.df_np_auto['дата_изм'] = self.df_np_auto.apply(lambda x: (None if len(str(x.дата_выдачи_факт))>5 and len(str(x.дата_изм))>5 else x.дата_изм), axis=1)
         except Exception as ex_:
-            print(f'{self.name_object_class} ошибка {ex_} функция - {self.pravka_otkaza.__name__}')
+            logger.error(f'❌ {self.name_object_class} ошибка {ex_} функция - {self.pravka_otkaza.__name__}')
             self.df_np_auto = self.df_np_auto
             
     
@@ -2354,7 +2811,7 @@ class Manufacturing_df_predobrabotka:
             df_except = df_except[self.white_list_columns_except_logist]
             self.except_kum = pd.concat([self.except_kum ,df_except])
         except Exception as ex_:
-            print(f'{self.name_object_class} ошибка {ex_} функция - {self.proverka_otkaza_arhiva.__name__}')
+            logger.error(f'❌ {self.name_object_class} ошибка {ex_} функция - {self.proverka_otkaza_arhiva.__name__}')
             None
         
         
@@ -2366,7 +2823,7 @@ class Manufacturing_df_predobrabotka:
         try:
             self.df_np_auto['дата_изм'] = self.df_np_auto.apply(lambda x: (x.дата_заказа+datetime.timedelta(days=5) if str(x.в_ар_хив).lower()=='да' and len(str(x.дата_изм))<5 else x.дата_изм), axis=1)
         except Exception as ex_:
-            print(f'{self.name_object_class} ошибка {ex_} функция - {self.pravka_otkaza_arhiva.__name__}')
+            logger.error(f'❌ {self.name_object_class} ошибка {ex_} функция - {self.pravka_otkaza_arhiva.__name__}')
             self.df_np_auto = self.df_np_auto
 
         
@@ -2397,7 +2854,7 @@ class Manufacturing_df_predobrabotka:
                 df_except = df_except[self.white_list_columns_except_logist]
                 self.except_kum = pd.concat([self.except_kum ,df_except])
         except Exception as ex_:
-            print(f'{self.name_object_class} ошибка {ex_} функция - {self.proverka_sklada_na_daty_oplaty_i_ceny_prodajy.__name__}')
+            logger.error(f'❌ {self.name_object_class} ошибка {ex_} функция - {self.proverka_sklada_na_daty_oplaty_i_ceny_prodajy.__name__}')
             None
         
     def proverka_daty_oplaty(self):
@@ -2413,7 +2870,7 @@ class Manufacturing_df_predobrabotka:
             df_except = df_except[self.white_list_columns_except_logist]
             self.except_kum = pd.concat([self.except_kum ,df_except])
         except Exception as ex_:
-            print(f'{self.name_object_class} ошибка {ex_} функция - {self.proverka_daty_oplaty.__name__}')
+            logger.error(f'❌ {self.name_object_class} ошибка {ex_} функция - {self.proverka_daty_oplaty.__name__}')
             None
             
     ######################### Блок дат склада больше ли они текущего дня
@@ -2430,7 +2887,7 @@ class Manufacturing_df_predobrabotka:
             df_except = df_except[self.white_list_columns_except_logist]
             self.except_kum = pd.concat([self.except_kum ,df_except])
         except Exception as ex_:
-            print(f'{self.name_object_class} ошибка {ex_} функция - {self.proverka_daty_oplaty_scheta_na_sklade.__name__}')
+            logger.error(f'❌ {self.name_object_class} ошибка {ex_} функция - {self.proverka_daty_oplaty_scheta_na_sklade.__name__}')
             None
     
     def proverka_daty_prihoda_na_sclad(self):
@@ -2446,7 +2903,7 @@ class Manufacturing_df_predobrabotka:
             df_except = df_except[self.white_list_columns_except_logist]
             self.except_kum = pd.concat([self.except_kum ,df_except])
         except Exception as ex_:
-            print(f'{self.name_object_class} ошибка {ex_} функция - {self.proverka_daty_prihoda_na_sclad.__name__}')
+            logger.error(f'❌ {self.name_object_class} ошибка {ex_} функция - {self.proverka_daty_prihoda_na_sclad.__name__}')
             None
             
     def proverka_daty_contrakta_na_skale(self):
@@ -2462,7 +2919,7 @@ class Manufacturing_df_predobrabotka:
             df_except = df_except[self.white_list_columns_except_logist]
             self.except_kum = pd.concat([self.except_kum ,df_except])
         except Exception as ex_:
-            print(f'{self.name_object_class} ошибка {ex_} функция - {self.proverka_daty_contrakta_na_skale.__name__}')
+            logger.error(f'❌ {self.name_object_class} ошибка {ex_} функция - {self.proverka_daty_contrakta_na_skale.__name__}')
             None
             
     def proverka_daty_prodajy_na_skale(self):
@@ -2478,7 +2935,7 @@ class Manufacturing_df_predobrabotka:
             df_except = df_except[self.white_list_columns_except_logist]
             self.except_kum = pd.concat([self.except_kum ,df_except])
         except Exception as ex_:
-            print(f'{self.name_object_class} ошибка {ex_} функция - {self.proverka_daty_contrakta_na_skale.__name__}')
+            logger.error(f'❌ {self.name_object_class} ошибка {ex_} функция - {self.proverka_daty_prodajy_na_skale.__name__}')
             None
     
     
@@ -2513,7 +2970,7 @@ class Manufacturing_df_predobrabotka:
             df_except = df_except[self.white_list_columns_except_logist]
             self.except_kum = pd.concat([self.except_kum ,df_except])
         except Exception as ex_:
-            print(f'{self.name_object_class} ошибка {ex_} функция - {self.proverka_dat_v_np_na_previchenie.__name__}')
+            logger.error(f'❌ {self.name_object_class} ошибка {ex_} функция - {self.proverka_dat_v_np_na_previchenie.__name__}')
             None
             
             
@@ -2528,7 +2985,7 @@ class Manufacturing_df_predobrabotka:
             df_except = df_except[self.white_list_columns_except_logist]
             self.except_kum = pd.concat([self.except_kum ,df_except])
         except Exception as ex_:
-            print(f'{self.name_object_class} ошибка {ex_} функция - {self.proverka_date_oplaty_na_min_date_prihoda.__name__}')
+            logger.error(f'❌ {self.name_object_class} ошибка {ex_} функция - {self.proverka_date_oplaty_na_min_date_prihoda.__name__}')
             None
             
             
@@ -2542,7 +2999,7 @@ class Manufacturing_df_predobrabotka:
             df_except = df_except[self.white_list_columns_except_logist]
             self.except_kum = pd.concat([self.except_kum ,df_except])
         except Exception as ex_:
-            print(f'{self.name_object_class} ошибка {ex_} функция - {self.proverka_date_prihoda_na_mean_date_prihoda.__name__}')
+            logger.error(f'❌ {self.name_object_class} ошибка {ex_} функция - {self.proverka_date_prihoda_na_mean_date_prihoda.__name__}')
             None
             
     def proverka_spravki_schet_i_vidachy(self):
@@ -2556,7 +3013,7 @@ class Manufacturing_df_predobrabotka:
             df_except = df_except[self.white_list_columns_except_logist]
             self.except_kum = pd.concat([self.except_kum ,df_except])
         except Exception as ex_:
-            print(f'{self.name_object_class} ошибка {ex_} функция - {self.proverka_spravki_schet_i_vidachy.__name__}')
+            logger.error(f'❌ {self.name_object_class} ошибка {ex_} функция - {self.proverka_spravki_schet_i_vidachy.__name__}')
             None
             
     def pravka_spravki_schet_i_vidachy(self):
@@ -2568,7 +3025,7 @@ class Manufacturing_df_predobrabotka:
                                                                                          and len(str(x.дата_выдачи_факт))<5 
                                                                                          and str(x.в_ар_хив).lower().strip()=='да' else x.дата_справки_счет_факт), axis=1)
         except Exception as ex_:
-            print(f'{self.name_object_class} ошибка {ex_} функция - {self.pravka_spravki_schet_i_vidachy.__name__}')
+            logger.error(f'❌ {self.name_object_class} ошибка {ex_} функция - {self.pravka_spravki_schet_i_vidachy.__name__}')
             self.df_np_auto = self.df_np_auto
             
     def proverka_vidachy_i_spravki_schet(self):
@@ -2583,8 +3040,26 @@ class Manufacturing_df_predobrabotka:
                 df_except = df_except[self.white_list_columns_except_logist]
                 self.except_kum = pd.concat([self.except_kum ,df_except])
         except Exception as ex_:
-            print(f'{self.name_object_class} ошибка {ex_} функция - {self.proverka_spravki_schet_i_vidachy.__name__}')
+            logger.error(f'❌ {self.name_object_class} ошибка {ex_} функция - {self.proverka_spravki_schet_i_vidachy.__name__}')
             None   
+
+    def proverka_vidachy_i_polnoy_oplaty(self): #04.06.2026
+        """если есть выдача но нет даты полной оплаты
+        """
+        data_bolche = 5 # дней
+        try:
+            if self.name_object_class not in ('OVP_YAR', 'OVP__YAR', 'OVP__RYB', 'OVP_SAR', 'OVP_vved_MSK'):
+                df_except = copy.deepcopy(self.df_np_auto)
+                df_except['ошибка'] = self.df_np_auto.apply(lambda x: (f'{x.vin} дата выдачи {x.дата_выдачи_факт} даты полной оплаты нет {x.дата_полной_оплаты_факт} авто выдан - оплачено {x.получено_за_ам_руб}' 
+                                                                    if len(str(x.дата_выдачи_факт))>5 and len(str(x.дата_полной_оплаты_факт))<5 and float(x.получено_за_ам_руб)>0 
+                                                                    and (yesterday()-x.дата_выдачи_факт).days>data_bolche else None), axis=1)
+                df_except = df_except[df_except['ошибка'].notna()]
+                df_except = df_except[self.white_list_columns_except_logist]
+                self.except_kum = pd.concat([self.except_kum ,df_except])
+        except Exception as ex_:
+            logger.error(f'❌ {self.name_object_class} ошибка {ex_} функция - {self.proverka_vidachy_i_polnoy_oplaty.__name__}')
+            None   
+
             
     def proverka_ceny_prodajy_i_daty_prodajy(self): # скорректировано 11.07.2025
         """если есть цена_продажи (дата прихода на склад или дата контракта) и данные с листа АРХИВ но нет даты продажи
@@ -2603,7 +3078,7 @@ class Manufacturing_df_predobrabotka:
             df_except = df_except[self.white_list_columns_except_logist]
             self.except_kum = pd.concat([self.except_kum ,df_except])
         except Exception as ex_:
-            print(f'{self.name_object_class} ошибка {ex_} функция - {self.proverka_ceny_prodajy_i_daty_prodajy.__name__}')
+            logger.error(f'❌ {self.name_object_class} ошибка {ex_} функция - {self.proverka_ceny_prodajy_i_daty_prodajy.__name__}')
             None   
 
     def proverka_daty_prodajy_i_nalichie_ceny_prodajy(self): ## 18.05.2025
@@ -2620,7 +3095,7 @@ class Manufacturing_df_predobrabotka:
             df_except = df_except[self.white_list_columns_except_logist]
             self.except_kum = pd.concat([self.except_kum ,df_except])
         except Exception as ex_:
-            print(f'{self.name_object_class} ошибка {ex_} функция - {self.proverka_daty_prodajy_i_nalichie_ceny_prodajy.__name__}')
+            logger.error(f'❌ {self.name_object_class} ошибка {ex_} функция - {self.proverka_daty_prodajy_i_nalichie_ceny_prodajy.__name__}')
             None   
     
     # ПОЗЖЕ УДАЛИТЬ причастные функции
@@ -2633,7 +3108,7 @@ class Manufacturing_df_predobrabotka:
             if  self.name_object_class in ['BAIC_varsh_MSK', 'HYUNDAI_varsh_MSK', 'UKA_varsh_MSK']:
                 self.df_np_auto['склад_заказ'] = self.df_np_auto['склад_заказ'].apply(lambda x: status_zakaza_VARSH_BAIK_UKA_HYUNDAI(x))
         except Exception as ex_:
-            print(f'{self.name_object_class} ошибка {ex_} функция - {self.individual_statvs_zakaza_VARSH_BAIK_UKA_HYUNDAI.__name__}')
+            logger.error(f'❌ {self.name_object_class} ошибка {ex_} функция - {self.individual_statvs_zakaza_VARSH_BAIK_UKA_HYUNDAI.__name__}')
              
             
     def idividual_prauka_KIA_varsh_status_sklad(self):
@@ -2641,7 +3116,7 @@ class Manufacturing_df_predobrabotka:
             if self.name_object_class == 'KIA_vved_MSK':
                 self.df_np_auto['склад_заказ'] = self.df_np_auto['склад_заказ'].apply(lambda x: pravka_statysa_KIA_(x))
         except Exception as ex_:
-            print(f'{self.name_object_class} ошибка {ex_} функция - {self.idividual_prauka_KIA_varsh_status_sklad.__name__}')
+            logger.error(f'❌ {self.name_object_class} ошибка {ex_} функция - {self.idividual_prauka_KIA_varsh_status_sklad.__name__}')
              
             
     def individual_pravka_statvs_zakaza_OVP(self):
@@ -2663,7 +3138,7 @@ class Manufacturing_df_predobrabotka:
         try:
             self.df_np_auto['склад_заказ'] = self.df_np_auto.apply(lambda x: (status_zakaza_po_date(x.дата_заказа, x.дата_прихода_на_склад) if str(x.склад_заказ) == 'nan' else x.склад_заказ), axis=1)
         except Exception as ex_:
-            print(f'{self.name_object_class} ошибка {ex_} функция - {self.statys_zakaza_nan_.__name__}')
+            logger.error(f'❌ {self.name_object_class} ошибка {ex_} функция - {self.statys_zakaza_nan_.__name__}')
             
     
     def except_column_korrekt(self):
@@ -2673,22 +3148,23 @@ class Manufacturing_df_predobrabotka:
         try:
             self.except_kum = exception_result_korrekt(self.except_kum, 'с_листа')
         except Exception as ex_:
-            print(f'{self.name_object_class} ошибка {ex_} функция - {self.except_column_korrekt.__name__}')    
+            logger.error(f'❌ {self.name_object_class} ошибка {ex_} функция - {self.except_column_korrekt.__name__}')    
     
 
     def save_object_class_excel(self):
         """функция сохранения промежуточного объекта класса с тремя собранными фреймами ОПЛАТА, АВТО, СКЛАД
         """
         # записываем в файл и если лист существует, то меняем лист
-        with pd.ExcelWriter(rf'{links_main(fr"{script_dir}/file_links.txt", "save_file_predobrabotka")}\{self.name_object_class}.xlsx', 
+        link_drc = links_main(fr"{DIR}\file_links.txt", "save_file_predobrabotka")
+        with pd.ExcelWriter(fr'{link_drc}\{self.name_object_class}.xlsx', 
                             engine='xlsxwriter', date_format = 'dd.mm.yyyy', datetime_format='dd.mm.yyyy') as writer:
             try:
-                self.df_np_oplata.to_excel(writer, 'oplata')
-                self.df_np_auto.to_excel(writer, 'auto')
-                self.df_sclad.to_excel(writer, 'sclad')
-                self.except_kum.to_excel(writer, 'except_kum')
+                self.df_np_oplata.to_excel(writer, sheet_name='oplata')
+                self.df_np_auto.to_excel(writer, sheet_name='auto')
+                self.df_sclad.to_excel(writer, sheet_name='sclad')
+                self.except_kum.to_excel(writer, sheet_name='except_kum')
             except Exception as ex_:
-                print(f'Ошибка при сохранении в Excel {self.name_object_class} {ex_}')
+                logger.error(f'❌ Ошибка при сохранении в Excel {self.name_object_class} {ex_}')
             None
     
         
@@ -2700,8 +3176,10 @@ class Manufacturing_df_predobrabotka:
             self.excepts_date()
             self.individual_pravka_statvs_zakaza_OVP()
             self.korrektirovka()
+            self.korrectirovka_formy_oplaty_OVP() # 07.11.25
             self.pravka_type_dataframe()
             self.poverka_date_prihoda_np_po_sl() # 10.07.2025
+            self.poverka_date_prihoda_scl_po_np() # 19.08.2025 
             self.kostraciva_po_date()          
             self.proverka_np_date()
             self.pravka_formy_oplaty()
@@ -2716,6 +3194,7 @@ class Manufacturing_df_predobrabotka:
             self.individual_pravka_KIA_vved_MSK_drop_duplicates()
             self.proverka_spravki_schet_i_vidachy()
             self.proverka_vidachy_i_spravki_schet()
+            self.proverka_vidachy_i_polnoy_oplaty() #04.06.2026
             self.proverka_ceny_prodajy_i_daty_prodajy()
             self.pravka_spravki_schet_i_vidachy()
             self.proverka_dat_v_np_na_previchenie()
@@ -2732,26 +3211,22 @@ class Manufacturing_df_predobrabotka:
         if self.save_excel:
         # запуск завершающих функций
             self.save_object_class_excel()
-        
 
 
-# наполняем словарь базами данных создавая экземпляры класса
+logger.info(f'🔄 наполняем словарь базами данных создавая экземпляры класса Manufacturing_df_predobrabotka')
 catalog_df_predobrabotka = {} # словарь со всеми базами
 
 count_bd = len(catalog_df.keys())
 for i in catalog_df.keys():
     try:
-        print(f'{i}-----------------------------------')
-        LOG_inf(f'Создаем объект класса {Manufacturing_df_predobrabotka.__name__} {i}', 'INFO')
+        logger.info(f'{i}-----------------------------------')
+        logger.info(f'✅ Создаем объект класса {Manufacturing_df_predobrabotka.__name__} {i}')
         catalog_df_predobrabotka[i] = Manufacturing_df_predobrabotka(catalog_df[i], i, True, True)
         count_bd-=1
-        print(f'Осталось создать {count_bd} объектов класса')
+        logger.info(f'Осталось создать {count_bd} объектов класса')
     except Exception as ex_:
-        print(f'{ex_}')
-        LOG_inf(f'Не удалось создать объект класса {Manufacturing_df_predobrabotka.__name__} {i}', 'ERROR', [ex_])
-        
-        
-        
+        logger.error(f'❌ Не удалось создать объект класса {Manufacturing_df_predobrabotka.__name__} {i} ошибка {ex_}')
+
 class Manufacturing_df_oborotka:
     def __init__(self, name_object_class_Manufacturing_df_predobrabotka, object_class_Manufacturing_df_predobrabotka, starter=None, ignore_matadata=None):
         """класс заполнения листов оборотки на основании предобратанных объектов класса Manufacturing_df_sborka
@@ -2762,7 +3237,7 @@ class Manufacturing_df_oborotka:
             object_class_Manufacturing_df (_type_): предобработанный объект класса Manufacturing_df_sborka
             ignore_matadada : True or False - при флаге True в классе принудительно запустится обновление всех объектов в обход матаданных
         """
-        self.days_ago = 10                                                                                                                             # на сколько дней назад окатываемся для проверки обновления
+        self.days_ago = DAYS_AGO_METADATA                                                                                                              # на сколько дней назад окатываемся для проверки обновления
         self.name_object_class = copy.deepcopy(name_object_class_Manufacturing_df_predobrabotka)                                                       # имя объекта класса Manufacturing_df_sborka 
         self.object_class = copy.deepcopy(object_class_Manufacturing_df_predobrabotka)                                                                 # инициализируем предобработанный объект класса Manufacturing_df_sborka 
         self.df_np_oplata = self.object_class.df_np_oplata
@@ -2797,7 +3272,7 @@ class Manufacturing_df_oborotka:
                 self.df_oborotka['зкз_путь_нал'] = self.df_oborotka.apply(lambda x: zakazy_vid_oplaty(self.df_np_auto, x.календарь, 'дата_заказа', 'в пути', 'склад_заказ', 'форма_оплаты', 'нал'), axis=1)
                 self.df_oborotka['зкз_склад_нал'] = self.df_oborotka.apply(lambda x: zakazy_vid_oplaty(self.df_np_auto, x.календарь, 'дата_заказа', 'на складе', 'склад_заказ', 'форма_оплаты', 'нал'), axis=1)
             except Exception as ex_:
-                print(f'{self.name_object_class} ошибка {ex_} функция - {self.zakazy_st_1.__name__}')
+                logger.error(f'❌ {self.name_object_class} ошибка {ex_} функция - {self.zakazy_st_1.__name__}')
             
     # отказы
     def otkazy_st_2(self):    
@@ -2810,7 +3285,7 @@ class Manufacturing_df_oborotka:
                 # self.df_oborotka['откз_путь_кред'] = self.df_oborotka.apply(lambda x: otkazy(self.df_np_auto, x.календарь, 'дата_изм', 'кре', 'форма_оплаты', 'в пути', 'склад_заказ', 'да', 'в_ар_хив'), axis=1)
                 # self.df_oborotka['откз_путь_нал'] = self.df_oborotka.apply(lambda x: otkazy(self.df_np_auto, x.календарь, 'дата_изм', 'нал', 'форма_оплаты', 'в пути', 'склад_заказ', 'да', 'в_ар_хив'), axis=1)
             except Exception as ex_:
-                print(f'{self.name_object_class} ошибка {ex_} функция - {self.otkazy_st_2.__name__}')
+                logger.error(f'❌ {self.name_object_class} ошибка {ex_} функция - {self.otkazy_st_2.__name__}')
             
             
     # выдачи
@@ -2823,7 +3298,7 @@ class Manufacturing_df_oborotka:
                 self.df_oborotka['выдачи_нал'] = self.df_oborotka.apply(lambda x: kolichestyo_vidach(self.df_sclad, x.календарь, 'дата_продажи_факт', 'нал', 'форма_оплаты'), axis=1)
                 self.df_oborotka['выдачи_всего'] = self.df_oborotka.apply(lambda x: (x.выдачи_кред + x.выдачи_нал), axis=1)
             except Exception as ex_:
-                print(f'{self.name_object_class} ошибка {ex_} функция - {self.vidachy_st_3.__name__}')
+                logger.error(f'❌ {self.name_object_class} ошибка {ex_} функция - {self.vidachy_st_3.__name__}')
         
     # всего заказов с учетом отказов и выдач
     # если что-то не идет накопительно значит в NP столбец Дата изм есть отказные авто с пустотами - нужно нагибать логистов (дописать проверку) !!!!!!!!!!
@@ -2840,7 +3315,7 @@ class Manufacturing_df_oborotka:
                                                                                                                                     'откз_нал', 'выдачи_нал'), axis=1)
                 self.df_oborotka['всего_зкз_с_уч_откз_и_выд_всего'] = self.df_oborotka.apply(lambda x: (x.всего_зкз_с_уч_откз_и_выд_кред + x.всего_зкз_с_уч_откз_и_выд_нал), axis=1)
             except Exception as ex_:
-                print(f'{self.name_object_class} ошибка {ex_} функция - {self.vsego_zakazov_s_vchetom_otkazov_st_4.__name__}')
+                logger.error(f'❌ {self.name_object_class} ошибка {ex_} функция - {self.vsego_zakazov_s_vchetom_otkazov_st_4.__name__}')
             
             
             
@@ -2854,7 +3329,7 @@ class Manufacturing_df_oborotka:
                 self.df_oborotka['выдачи_выручка'] = self.df_oborotka.apply(lambda x: sum_finance_day(self.df_sclad, x.календарь, 'дата_продажи_факт', 'цена_продажи'), axis=1)
                 self.df_oborotka['выдачи_себестоимость'] = self.df_oborotka.apply(lambda x: sum_finance_day(self.df_sclad, x.календарь, 'дата_продажи_факт', 'себестоимость_ам'), axis=1)
             except Exception as ex_:
-                print(f'{self.name_object_class} ошибка {ex_} функция - {self.fin_pokazately_st_5.__name__}')
+                logger.error(f'❌ {self.name_object_class} ошибка {ex_} функция - {self.fin_pokazately_st_5.__name__}')
             
     # показатели накопительно
     def pokazately_nakopitelno_st_6(self):
@@ -2867,7 +3342,7 @@ class Manufacturing_df_oborotka:
                 self.df_oborotka['себестоимость_накоп'] = self.df_oborotka.apply(lambda x: sum_finance_day_nakopitelno(self.df_oborotka, x.календарь, 'календарь', 'выдачи_себестоимость'), axis=1)
                 self.df_oborotka['наценка'] = self.df_oborotka.apply(lambda x: nacenka(self.df_oborotka, x.календарь, 'календарь', 'выручка_накоп', 'себестоимость_накоп'), axis=1)
             except Exception as ex_:
-                print(f'{self.name_object_class} ошибка {ex_} функция - {self.pokazately_nakopitelno_st_6.__name__}')
+                logger.error(f'❌ {self.name_object_class} ошибка {ex_} функция - {self.pokazately_nakopitelno_st_6.__name__}')
             
         
     # приход а-м сводные/клиентские
@@ -2879,7 +3354,7 @@ class Manufacturing_df_oborotka:
                 self.df_oborotka['приход_ам_своб'] = self.df_oborotka.apply(lambda x: prihod_auto(self.df_sclad, x.календарь, 'дата_прихода_на_склад', 'дата_контракта_заказа', 'svobod'), axis=1)
                 self.df_oborotka['приход_ам_клиент'] = self.df_oborotka.apply(lambda x: prihod_auto(self.df_sclad, x.календарь, 'дата_прихода_на_склад', 'дата_контракта_заказа', 'klient'), axis=1)
             except Exception as ex_:
-                print(f'{self.name_object_class} ошибка {ex_} функция - {self.prihod_auto_st_7.__name__}')
+                logger.error(f'❌ {self.name_object_class} ошибка {ex_} функция - {self.prihod_auto_st_7.__name__}')
             
         
     # авто на складе
@@ -2891,8 +3366,9 @@ class Manufacturing_df_oborotka:
                 self.df_oborotka['склад_всего_ам'] = self.df_oborotka.apply(lambda x: auto_na_sclade(self.df_sclad, x.календарь, 'дата_прихода_на_склад', 'дата_продажи_факт', 'дата_контракта_заказа', 'all'), axis=1)
                 self.df_oborotka['склад_в_тч_демо_ам'] = self.df_oborotka.apply(lambda x: auto_na_sclade(self.df_sclad, x.календарь, 'дата_прихода_на_склад', 'дата_продажи_факт', 'дата_контракта_заказа', 'demo'), axis=1)
                 self.df_oborotka['склад_конс_ам'] = self.df_oborotka.apply(lambda x: auto_na_sclade_consignacia(self.df_sclad, x.календарь), axis=1)
+                self.df_oborotka['склад_конс_руб'] = self.df_oborotka.apply(lambda x: auto_na_sclade_consignacia_dengi(self.df_sclad, x.календарь), axis=1) # 09.12.25
             except Exception as ex_:
-                print(f'{self.name_object_class} ошибка {ex_} функция - {self.auto_na_sclade_st_8.__name__}')
+                logger.error(f'❌ {self.name_object_class} ошибка {ex_} функция - {self.auto_na_sclade_st_8.__name__}')
             
         
     def auto_u_puti_st_9(self):
@@ -2900,7 +3376,7 @@ class Manufacturing_df_oborotka:
             try:
                 self.df_oborotka['ам_в_пути_выкуп'] = self.df_oborotka.apply(lambda x: auto_u_puti_vikuplenie(self.df_sclad, x.календарь), axis=1)
             except Exception as ex_:
-                print(f'{self.name_object_class} ошибка {ex_} функция - {self.auto_u_puti_st_9.__name__}')
+                logger.error(f'❌ {self.name_object_class} ошибка {ex_} функция - {self.auto_u_puti_st_9.__name__}')
         
         
     # оплаты
@@ -2909,7 +3385,7 @@ class Manufacturing_df_oborotka:
             try:
                 self.df_oborotka['оплаты'] = self.df_oborotka.apply(lambda x: oplaty(self.df_np_oplata, x.календарь), axis=1)
             except Exception as ex_:
-                print(f'{self.name_object_class} ошибка {ex_} функция - {self.oplaty_st_10.__name__}')
+                logger.error(f'❌ {self.name_object_class} ошибка {ex_} функция - {self.oplaty_st_10.__name__}')
             
             
     def platejy_st_11(self):
@@ -2922,7 +3398,7 @@ class Manufacturing_df_oborotka:
                 self.df_oborotka['платежи_ам_свободн_шт'] = self.df_oborotka.apply(lambda x: (x.платежи_ам_всего_шт - x.платежи_ам_клиент_шт), axis=1)
                 self.df_oborotka['платежи_ам_свободн_руб'] = self.df_oborotka.apply(lambda x: (x.платежи_ам_всего_руб - x.платежи_ам_клиент_руб), axis=1)
             except Exception as ex_:
-                print(f'{self.name_object_class} ошибка {ex_} функция - {self.platejy_st_11.__name__}')
+                logger.error(f'❌ {self.name_object_class} ошибка {ex_} функция - {self.platejy_st_11.__name__}')
     
 
     def oborotnie_sredstya_st_13(self):
@@ -2932,7 +3408,7 @@ class Manufacturing_df_oborotka:
                 self.df_oborotka['оборот_средства_без_демо_на_скл'] = self.df_oborotka.apply(lambda x: oborotnie_sredstya(self.df_sclad, x.календарь, 'not_demo_na_sclade'), axis=1)
                 self.df_oborotka['оборот_средства_демо'] = self.df_oborotka.apply(lambda x: oborotnie_sredstya(self.df_sclad, x.календарь, 'demo'), axis=1)
             except Exception as ex_:
-                print(f'{self.name_object_class} ошибка {ex_} функция - {self.oborotnie_sredstya_st_13.__name__}')
+                logger.error(f'❌ {self.name_object_class} ошибка {ex_} функция - {self.oborotnie_sredstya_st_13.__name__}')
             
 
     def proverka_oborotnih_sredsty_st_14(self):
@@ -2940,7 +3416,7 @@ class Manufacturing_df_oborotka:
             try:
                 self.df_oborotka['проверка'] = self.df_oborotka.apply(lambda x: (proverka_oborotnih_sredsty(self.df_sclad, x.календарь)-x.оборот_средства_без_демо), axis=1)
             except Exception as ex_:
-                print(f'{self.name_object_class} ошибка {ex_} функция - {self.proverka_oborotnih_sredsty_st_14.__name__}')
+                logger.error(f'❌ {self.name_object_class} ошибка {ex_} функция - {self.proverka_oborotnih_sredsty_st_14.__name__}')
             
             
     def dop_informaciva_15(self):
@@ -2950,7 +3426,7 @@ class Manufacturing_df_oborotka:
             try:
                 self.df_oborotka['имя_объекта'] = self.name_object_class
             except Exception as ex_:
-                print(f'{self.name_object_class} ошибка {ex_} функция - {self.dop_informaciva.__name__}')
+                logger.error(f'❌ {self.name_object_class} ошибка {ex_} функция - {self.dop_informaciva.__name__}')
             
     def region_marka_16(self):
         """добавляем столбец регион в лист оборотки
@@ -2961,7 +3437,7 @@ class Manufacturing_df_oborotka:
                 self.df_oborotka['регион'] = self.name_object_class.split('_')[-1]
                 
             except Exception as ex_:
-                print(f'{self.name_object_class} ошибка {ex_} функция - {self.region_marka_16.__name__}')
+                logger.error(f'❌ {self.name_object_class} ошибка {ex_} функция - {self.region_marka_16.__name__}')
                 
     def update_arhiv_oborotka_17(self):
         """в считанной архивной оборотке добавляем строки с датами 
@@ -2971,14 +3447,14 @@ class Manufacturing_df_oborotka:
             try:
                 self.df_oborotka = protajka_stolbcov_v_arhivnoy_oborotke(self.df_oborotka)
             except Exception as ex_:
-                print(f'{self.name_object_class} ошибка {ex_} функция - {self.update_arhiv_oborotka_17.__name__}')
+                logger.error(f'❌ {self.name_object_class} ошибка {ex_} функция - {self.update_arhiv_oborotka_17.__name__}')
     
     def vidachy_sebestoimost_nakopitelno_18(self):
         if self.update_oborotka==True:
             try:
                 self.df_oborotka['себестоимость_накоп_30'] = self.df_oborotka.apply(lambda x: pokazatel_nakopitelno_diapazon_date(self.df_oborotka, x.календарь, 30, 'выдачи_себестоимость'), axis=1)
             except Exception as ex_:
-                print(f'{self.name_object_class} ошибка {ex_} функция - {self.vidachy_sebestoimost_nakopitelno_18.__name__}')       
+                logger.error(f'❌ {self.name_object_class} ошибка {ex_} функция - {self.vidachy_sebestoimost_nakopitelno_18.__name__}')       
             
     # def bonus_park_18(self):
     #     """цепляет бонусы из ПАРКА
@@ -2996,16 +3472,17 @@ class Manufacturing_df_oborotka:
         """
         try:
             # записываем в файл и если лист существует, то меняем лист
-            with pd.ExcelWriter(rf'{links_main(fr"{script_dir}/file_links.txt", "save_file_oborotka")}\{self.name_object_class}.xlsx', 
+            link_drc = links_main(fr"{DIR}\file_links.txt", "save_file_oborotka")
+            with pd.ExcelWriter(rf'{link_drc}\{self.name_object_class}.xlsx', 
                                 engine='xlsxwriter', date_format = 'dd.mm.yyyy', datetime_format='dd.mm.yyyy') as writer:
             # Записать ваш DataFrame в файл на листы
-                self.df_np_oplata.to_excel(writer, 'oplata')    # отключить сохранение после завершения проекта оставить только для 'oborotka'
-                self.df_np_auto.to_excel(writer, 'auto')        # отключить сохранение после завершения проекта оставить только для 'oborotka'
-                self.df_sclad.to_excel(writer, 'sclad')         # отключить сохранение после завершения проекта оставить только для 'oborotka'
-                self.except_kum.to_excel(writer, 'except_kum')
-                self.df_oborotka.to_excel(writer, 'oborotka')
+                self.df_np_oplata.to_excel(writer, sheet_name='oplata')    # отключить сохранение после завершения проекта оставить только для 'oborotka'
+                self.df_np_auto.to_excel(writer, sheet_name='auto')        # отключить сохранение после завершения проекта оставить только для 'oborotka'
+                self.df_sclad.to_excel(writer, sheet_name='sclad')         # отключить сохранение после завершения проекта оставить только для 'oborotka'
+                self.except_kum.to_excel(writer, sheet_name='except_kum')
+                self.df_oborotka.to_excel(writer, sheet_name='oborotka')
         except Exception as ex_:
-                print(f'{self.name_object_class} ошибка {ex_} функция - {self.save_object_class_excel.__name__} видимо файл открыт')
+                logger.error(f'❌ {self.name_object_class} ошибка {ex_} функция - {self.save_object_class_excel.__name__} видимо файл открыт')
             
     def save_object_class_excel_exception(self):
         
@@ -3013,14 +3490,14 @@ class Manufacturing_df_oborotka:
         """
         try:
             # записываем в файл и если лист существует, то меняем лист
-            with pd.ExcelWriter(rf'{links_main(fr"{script_dir}/file_links.txt", "save_file_exception")}\{self.name_object_class}.xlsx', 
+            link_drc = links_main(fr"{DIR}\file_links.txt", "save_file_exception")
+            with pd.ExcelWriter(rf'{link_drc}\{self.name_object_class}.xlsx', 
                                 engine='xlsxwriter', date_format = 'dd.mm.yyyy', datetime_format='dd.mm.yyyy') as writer:
             # Записать ваш DataFrame в файл на листы
-                self.except_kum.to_excel(writer, 'except')
+                self.except_kum.to_excel(writer, sheet_name='except')
         except Exception as ex_:
-                print(f'{self.name_object_class} ошибка {ex_} функция - {self.save_object_class_excel_exception.__name__} видимо файл открыт')
+                logger.error(f'❌ {self.name_object_class} ошибка {ex_} функция - {self.save_object_class_excel_exception.__name__} видимо файл открыт')
 
-    
     
     def fnc_auto(self):
         """функция запуска функций
@@ -3044,45 +3521,42 @@ class Manufacturing_df_oborotka:
             self.region_marka_16()
             self.update_arhiv_oborotka_17()
             self.vidachy_sebestoimost_nakopitelno_18()
-
             self.save_object_class_excel()
-            self.save_object_class_excel_exception()
-            
-            
-            
+            self.save_object_class_excel_exception()       
+
+
+
+logger.info(f'🚀 Наполняем словарь со всеми базами объектов класса Manufacturing_df_oborotka')
 catalog_df_oborotka = {} # словарь со всеми базами
 
 counter_update = []
 counter_not_update = []
 count_bd = len(catalog_df_predobrabotka.keys())
 for i in catalog_df_predobrabotka.keys():
-    print(f'{i}-----------------------------------')
-    LOG_inf(f'Создание объекта класса {Manufacturing_df_oborotka.__name__} {i}', 'INFO')
-    catalog_df_oborotka[i] = Manufacturing_df_oborotka(i, catalog_df_predobrabotka[i], True, False)
+    logger.info(f'{i}-----------------------------------')
+    logger.info(f'✅ Создание объекта класса {Manufacturing_df_oborotka.__name__} {i}')
+    catalog_df_oborotka[i] = Manufacturing_df_oborotka(i, catalog_df_predobrabotka[i], True, IGNORE_METADATA)
     count_bd-=1
     if catalog_df_oborotka[i].update_oborotka:
         counter_update.append(i)
     else:
         counter_not_update.append(i)
-    print(f'Осталось создать {count_bd} объектов класса')
+    logger.info(f'Осталось создать {count_bd} объектов класса')
     
-print(f'Обновлено объектов {len(counter_update)} {counter_update}')
-print(f'Не обнавлено объектов {len(counter_not_update)} {counter_not_update}')
-LOG_inf(f'Обновлено объектов {len(counter_update)} {counter_update}', 'INFO')
-LOG_inf(f'Не обнавлено объектов {len(counter_not_update)} {counter_not_update}', 'INFO')
+logger.info(f'✅ Обновлено объектов {len(counter_update)} {counter_update}')
+logger.info(f'⚠️ Не обнавлено объектов {len(counter_not_update)} {counter_not_update}')
 
 
 #конкатинируем в одну БД
-LOG_inf(f'Конкатинируем оборотку в одну БД', 'INFO')
+logger.info(f'Конкатинируем оборотку в одну БД')
 try: 
     result_svod = pd.concat([catalog_df_oborotka[i].df_oborotka for i in catalog_df_oborotka.keys()])
 except Exception as ex_:
-    print(ex_)
-    LOG_inf(f'Конкатинируем оборотку в одну БД', 'ERROR', ex_)
-    
-    
+    logger.error(f'❌ Ошибка конкатинации {ex_}')
+
+
 # блок бонусов из ПАРКА цепляем к оборотке
-LOG_inf(f'Цепляем бонусы из ПАРКА', 'INFO')
+logger.info(f'Цепляем бонусы из ПАРКА')
 try:
     df_step_1 = PARK.copy()
     df_step_1 = df_step_1[df_step_1['ТИП'] == 'Бонус'][['мес' , 'Подразделение/площадка', 'Марка', 'Бонус']]
@@ -3091,12 +3565,10 @@ try:
     df_step_1 = df_step_1.rename(columns={'мес':'календарь', 'марка_фильтр':'марка', 'регион_фильтр':'регион'})
     result_svod = pd.concat([result_svod, df_step_1])
 except Exception as ex_:
-    print(ex_)
-    LOG_inf(f'Цепляем бонусы из ПАРКА', 'ERROR', ex_)
-    
-    
-# блок планов цепляем к оборотке
-LOG_inf(f'Цепляем ПЛАНЫ', 'INFO')
+    logger.error(f'❌ Ошибка {ex_}')
+
+
+logger.info(f'Цепляем ПЛАНЫ')
 try:
     df_step_2 = PLAN_AUTO.copy()
     df_step_2['календарь'] = df_step_2.apply(lambda x: (individ_date_plan(x.year, x.mnth)), axis=1)
@@ -3107,24 +3579,50 @@ try:
     df_step_2 = df_step_2.rename(columns={'марка_фильтр':'марка', 'регион_фильтр':'регион'})
     result_svod = pd.concat([result_svod, df_step_2])
 except Exception as ex_:
-    print(ex_)
-    LOG_inf(f'Цепляем ПЛАНЫ', 'ERROR', ex_)
-    
-    
+    logger.error(f'❌ Ошибка {ex_}')
+
+
+logger.info(f'Проверка информационного характера')
 for i in catalog_df_predobrabotka.keys():
     try:
         res = [i for i in  catalog_df_predobrabotka[i].df_np_auto['склад_заказ'].unique() if i not in ['на складе', 'в пути']]
         if len(res)>0:
-            print(f'Проверка значений в столбце склад_заказ отличных от [на складе / в пути]', i, res)
+            logger.info(f'Проверка значений в столбце склад_заказ отличных от [на складе / в пути] {i} {res}')
     except Exception as ex_:
-        print(f'{i} нет столбца')
+        logger.error(f'{i} нет столбца')
+
 
 # обрезаем лишнее
-result_svod = result_svod.dropna(subset=['марка', 'регион']) 
-result_svod = result_svod[result_svod['календарь']>=KOSTRACIVA]
+logger.info(f'Обрезаем лишнее')
+try:
+    # Приводим KOSTRACIVA к нужному типу
+    if isinstance(KOSTRACIVA, str):
+        KOSTRACIVA = pd.to_datetime(KOSTRACIVA)
+    elif not isinstance(KOSTRACIVA, (pd.Timestamp, datetime)):
+        logger.warning(f'KOSTRACIVA имеет неподдерживаемый тип: {type(KOSTRACIVA)}')
+        KOSTRACIVA = pd.to_datetime(KOSTRACIVA)
+    
+    result_svod = result_svod.dropna(subset=['марка', 'регион'])
+    result_svod = result_svod[result_svod['календарь'] >= KOSTRACIVA]
+except Exception as ex_:
+    logger.error(f'❌ Ошибка обрезания {ex_}')
+ 
+
+logger.info(f'переименовываем HYUNDAIpi в PAR_IMP и прочие ПИ смотреть функцию')
+try:
+    result_svod['марка'] = result_svod['марка'].apply(rename_autocenry)
+except Exception as ex_:
+    logger.error(f'❌ Ошибка переименования {ex_}')
+
+
+logger.info(f'переименовываются все pi imp в паралельный импорт')
+try:
+    result_svod['марка_2'] = result_svod['марка'].apply(lambda x: (rename_autocenry_st_2(df_rename_au, 'name', str(x), 'new_name')))
+except Exception as ex_:
+    logger.error(f'❌ Ошибка переименования {ex_}')
 
 # БЛОК СРЕДНИЙ СКЛАД
-LOG_inf(f'запуск расчета среднего склада', 'INFO')
+logger.info(f'запуск расчета среднего склада')
 try:
     result_svod_copy = copy.deepcopy(result_svod)
     result_svod_copy_sr_sklad = result_svod_copy[(result_svod_copy['календарь'] <= yesterday())]
@@ -3134,86 +3632,242 @@ try:
                                 values=['оборот_средства_без_демо', 'выдачи_всего',"ср_склад_авто"], 
                                 columns=[], 
                                 aggfunc={'оборот_средства_без_демо':'mean', 'выдачи_всего':'sum',"ср_склад_авто":'mean'}).reset_index()
+    
 except Exception as ex_:
-    print(ex_)
-    LOG_inf(f'запуск расчета среднего склада', 'ERROR', ex_)
-    
-    
-# БЛОК КРАТКОЙ ОБОРОТКИ
-# сделать оборотку кратко как в оборотке лист КРАТКО
-LOG_inf(f'запуск расчета краткой оборотки', 'INFO')
+    logger.error(f'❌ запуск расчета среднего склада {ex_}')
+
+
+class Oborotka_nakopitelno:
+    # сделать оборотку кратко как в оборотке лист КРАТКО
+    def __init__(self, object_sborki):
+        self.starter_df = copy.deepcopy(object_sborki) # результат сборки объектов третьего класса подается сюда
+        self.oborotka_nak= None # результат сборки объектов третьего класса подается сюда
+
+        self.fnc_auto()
+
+    def starter_costraciva(self):
+            logger.info(f'Запуск {Oborotka_nakopitelno.__name__} {self.starter_costraciva.__name__}')
+            try:
+                self.oborotka_nak = self.starter_df[(self.starter_df['календарь'] <= yesterday())]
+            except Exception as e:
+                logger.error(f'❌ Ошибка класса {Oborotka_nakopitelno.__name__} {self.starter_costraciva.__name__} {e}')
+
+        
+    def preobrazovanie_perioda(self):
+        logger.info(f'Запуск {Oborotka_nakopitelno.__name__} {self.preobrazovanie_perioda.__name__}')
+        try:
+            # Проверяем тип данных столбца
+            logger.info(f"Тип данных 'календарь': {self.oborotka_nak['календарь'].dtype}")
+            
+            # Если столбец не datetime, преобразуем
+            if self.oborotka_nak['календарь'].dtype == 'object':
+                self.oborotka_nak['календарь'] = pd.to_datetime(self.oborotka_nak['календарь'])
+            
+            # Теперь можно использовать .dt
+            self.oborotka_nak['месяц'] = self.oborotka_nak['календарь'].dt.month
+            self.oborotka_nak['год'] = self.oborotka_nak['календарь'].dt.year
+            
+            logger.info(f"Успешно добавлены столбцы месяц и год")
+        except Exception as e:
+            logger.error(f'❌ Ошибка класса {Oborotka_nakopitelno.__name__} {self.preobrazovanie_perioda.__name__} {e}')
+
+
+    def gruppirovka(self):
+        # все группируем
+        logger.info(f'Запуск {Oborotka_nakopitelno.__name__} {self.gruppirovka.__name__}')
+        try:
+            not_columns = ['календарь', 'имя_объекта', 'марка',	'регион', 'месяц', 'год']
+            self.oborotka_nak = self.oborotka_nak.groupby(['год','месяц','марка', 'регион'])[[i for i in self.oborotka_nak.columns if i not in not_columns]].agg('sum')
+            self.oborotka_nak = self.oborotka_nak.reset_index()
+        except Exception as e:
+                    logger.error(f'❌ Ошибка класса {Oborotka_nakopitelno.__name__} {self.gruppirovka.__name__} {e}')
+
+    def zakazy_otkazy(self):
+        logger.info(f'Запуск {Oborotka_nakopitelno.__name__} {self.zakazy_otkazy.__name__}')
+        try:
+            self.oborotka_nak['всего_заказов'] = self.oborotka_nak['зкз_кред'] + self.oborotka_nak['зкз_нал']
+            self.oborotka_nak['всего_отказов'] = self.oborotka_nak['откз_кред'] + self.oborotka_nak['откз_нал']
+        except Exception as e:
+                            logger.error(f'❌ Ошибка класса {Oborotka_nakopitelno.__name__} {self.zakazy_otkazy.__name__} {e}')
+
+
+    def dohod(self):
+        logger.info(f'Запуск {Oborotka_nakopitelno.__name__} {self.dohod.__name__}')
+        try:
+            self.oborotka_nak['доход'] = self.oborotka_nak['выдачи_выручка'] - self.oborotka_nak['выдачи_себестоимость']
+        except Exception as e:
+            logger.error(f'❌ Ошибка класса {Oborotka_nakopitelno.__name__} {self.dohod.__name__} {e}')
+
+
+
+    def prihod_vsego(self):
+        logger.info(f'Запуск {Oborotka_nakopitelno.__name__} {self.prihod_vsego.__name__}')
+        try:
+            self.oborotka_nak['приход_ам_всего'] = self.oborotka_nak['приход_ам_своб'] + self.oborotka_nak['приход_ам_клиент']
+        except Exception as e:
+            logger.error(f'❌ Ошибка класса {Oborotka_nakopitelno.__name__} {self.prihod_vsego.__name__} {e}')
+
+    def clear_df(self):
+        logger.info(f'Запуск {Oborotka_nakopitelno.__name__} {self.clear_df.__name__}')
+        try:
+            self.oborotka_nak = self.oborotka_nak.drop(['зкз_путь_кред', 'зкз_склад_кред', 'зкз_путь_нал',
+                                                'зкз_склад_нал','зкз_кред',	'зкз_нал',	'откз_кред',
+                                                'откз_нал',	'всего_зкз_с_уч_откз_и_выд_кред',
+                                                'всего_зкз_с_уч_откз_и_выд_нал','всего_зкз_с_уч_откз_и_выд_всего', 
+                                                'выдачи_кред', 'выдачи_нал'], axis=1)
+            
+            # спсиок нужных столбцов
+            white_list_column = ['год',	'месяц','марка', 'регион', 'всего_заказов', 'всего_отказов', 'выдачи_всего', 'выдачи_выручка', 
+                                'доход', 'оплаты', 'платежи_ам_свободн_шт', 'платежи_ам_свободн_руб', 'платежи_ам_всего_шт', 
+                                'платежи_ам_всего_руб', 'приход_ам_своб', 'приход_ам_всего']
+        
+            self.oborotka_nak = self.oborotka_nak[white_list_column]
+        except Exception as e:
+            logger.error(f'❌ Ошибка класса {Oborotka_nakopitelno.__name__} {self.clear_df.__name__} {e}')
+
+    def clientskie(self):
+        logger.info(f'Запуск {Oborotka_nakopitelno.__name__} {self.clientskie.__name__}')
+        try:
+            self.oborotka_nak['клиентские_ам'] = self.oborotka_nak.apply(lambda x: last_day_period(self.starter_df, x.год, x.месяц, x.регион, x.марка, 'ам_на_складе_клиент') , axis=1)
+        except Exception as e:
+            logger.error(f'❌ Ошибка класса {Oborotka_nakopitelno.__name__} {self.clear_df.__name__} {e}')
+
+
+    def svobodnie_auto_bez_demo_i_consig(self):
+        logger.info(f'Запуск {Oborotka_nakopitelno.__name__} {self.svobodnie_auto_bez_demo_i_consig.__name__}')
+        try:
+            self.oborotka_nak['своб_ам_без_дем_и_консиг'] = self.oborotka_nak.apply(lambda x: last_day_period(self.starter_df, x.год, x.месяц, x.регион, x.марка, 'ам_на_складе_своб') 
+                                                                    - last_day_period(self.starter_df, x.год, x.месяц, x.регион, x.марка, 'склад_в_тч_демо_ам')
+                                                                    - last_day_period(self.starter_df, x.год, x.месяц, x.регион, x.марка, 'склад_конс_ам'), axis=1)
+        except Exception as e:
+                logger.error(f'❌ Ошибка класса {Oborotka_nakopitelno.__name__} {self.svobodnie_auto_bez_demo_i_consig.__name__} {e}')
+
+    def koncignacionnie_auto(self):
+        logger.info(f'Запуск {Oborotka_nakopitelno.__name__} {self.koncignacionnie_auto.__name__}')
+        try:
+            self.oborotka_nak['конс_авто'] = self.oborotka_nak.apply(lambda x: last_day_period(self.starter_df, x.год, x.месяц, x.регион, x.марка, 'склад_конс_ам'), axis=1)
+        except Exception as e:
+                logger.error(f'❌ Ошибка класса {Oborotka_nakopitelno.__name__} {self.koncignacionnie_auto.__name__} {e}')
+
+
+    def oborotnie_sredstva_vsego_bez_demo(self):
+        logger.info(f'Запуск {Oborotka_nakopitelno.__name__} {self.oborotnie_sredstva_vsego_bez_demo.__name__}')
+        try:
+            self.oborotka_nak['обор_срва_всего_без_демо'] = self.oborotka_nak.apply(lambda x: last_day_period(self.starter_df, x.год, x.месяц, x.регион, x.марка, 'оборот_средства_без_демо'), axis=1)
+        except Exception as e:
+                logger.error(f'❌ Ошибка класса {Oborotka_nakopitelno.__name__} {self.oborotnie_sredstva_vsego_bez_demo.__name__} {e}')
+
+
+    def oborotnie_sredstva_na_sclade_bez_demo(self):
+        logger.info(f'Запуск {Oborotka_nakopitelno.__name__} {self.oborotnie_sredstva_na_sclade_bez_demo.__name__}')
+        try:
+            self.oborotka_nak['обор_срва_на_складе_без_демо'] = self.oborotka_nak.apply(lambda x: last_day_period(self.starter_df, x.год, x.месяц, x.регион, x.марка, 'оборот_средства_без_демо_на_скл'), axis=1)
+        except Exception as e:
+                logger.error(f'❌ Ошибка класса {Oborotka_nakopitelno.__name__} {self.oborotnie_sredstva_na_sclade_bez_demo.__name__} {e}')
+
+
+    def append_column(self):
+        logger.info(f'Запуск {Oborotka_nakopitelno.__name__} {self.append_column.__name__}')
+        try:
+            self.oborotka_nak['бонус'] = self.oborotka_nak.apply(lambda x: last_day_period_2(self.starter_df, x.год, x.месяц, x.регион, x.марка, 'Бонус'), axis=1)
+            self.oborotka_nak['план'] = self.oborotka_nak.apply(lambda x: last_day_period_2(self.starter_df, x.год, x.месяц, x.регион, x.марка, 'ПЛН'), axis=1)
+        except Exception as e:
+                logger.error(f'❌ Ошибка класса {Oborotka_nakopitelno.__name__} {self.append_column.__name__} {e}')
+
+
+    def correctirovka_daty(self):
+        logger.info(f'Запуск {Oborotka_nakopitelno.__name__} {self.correctirovka_daty.__name__}')
+        try:
+            self.oborotka_nak['дата'] = self.oborotka_nak.apply(lambda x: (f'{x.год}-{x.месяц}-01'), axis=1)
+            self.oborotka_nak['дата'] = pd.to_datetime(self.oborotka_nak['дата'])
+            self.oborotka_nak = self.oborotka_nak.drop(['год', 'месяц'], axis=1)
+        except Exception as e:
+                logger.error(f'❌ Ошибка класса {Oborotka_nakopitelno.__name__} {self.correctirovka_daty.__name__} {e}')
+
+
+    def fnc_auto(self):
+        self.starter_costraciva()
+        self.preobrazovanie_perioda()
+        self.gruppirovka()
+        self.zakazy_otkazy()
+        self.dohod()
+        self.prihod_vsego()
+        self.clear_df()
+        self.clientskie()
+        self.svobodnie_auto_bez_demo_i_consig()
+        self.koncignacionnie_auto()
+        self.oborotnie_sredstva_vsego_bez_demo()
+        self.oborotnie_sredstva_na_sclade_bez_demo()
+        self.append_column()
+        self.correctirovka_daty()
+
+
+logger.info(f'Создание объекта накопительной оборотки')
 try:
-    oborotka_nakopitrlno = result_svod_copy[(result_svod_copy['календарь'] <= yesterday())]
-    oborotka_nakopitrlno['месяц'] = oborotka_nakopitrlno['календарь'].dt.month
-    oborotka_nakopitrlno['год'] = oborotka_nakopitrlno['календарь'].dt.year
-    # все группируем
-    not_columns = ['календарь', 'имя_объекта', 'марка',	'регион', 'месяц', 'год']
-    oborotka_nak = oborotka_nakopitrlno.groupby(['год','месяц','марка', 'регион'])[[i for i in oborotka_nakopitrlno.columns if i not in not_columns]].agg('sum')
-    oborotka_nak = oborotka_nak.reset_index()
+    oborotka_nak = Oborotka_nakopitelno(result_svod_copy)
+except Exception as e:
+    logger.error(f'Ошибка создания объекта накопительной оборотки {e}')
 
-    oborotka_nak['всего_заказов'] = oborotka_nak['зкз_кред'] + oborotka_nak['зкз_нал']
-    oborotka_nak['всего_отказов'] = oborotka_nak['откз_кред'] + oborotka_nak['откз_нал']
-    oborotka_nak['доход'] = oborotka_nak['выдачи_выручка'] - oborotka_nak['выдачи_себестоимость']
-    oborotka_nak['приход_ам_всего'] = oborotka_nak['приход_ам_своб'] + oborotka_nak['приход_ам_клиент']
-    oborotka_nak = oborotka_nak.drop(['зкз_путь_кред', 'зкз_склад_кред', 'зкз_путь_нал',
-                                    'зкз_склад_нал','зкз_кред',	'зкз_нал',	'откз_кред',
-                                    'откз_нал',	'всего_зкз_с_уч_откз_и_выд_кред',
-                                    'всего_зкз_с_уч_откз_и_выд_нал','всего_зкз_с_уч_откз_и_выд_всего', 
-                                    'выдачи_кред', 'выдачи_нал'], axis=1)
 
-    # спсиок нужных столбцов
-    white_list_column = ['год',	'месяц','марка', 'регион', 'всего_заказов', 'всего_отказов', 'выдачи_всего', 'выдачи_выручка', 
-                        'доход', 'оплаты', 'платежи_ам_свободн_шт', 'платежи_ам_свободн_руб', 'платежи_ам_всего_шт', 
-                        'платежи_ам_всего_руб', 'приход_ам_своб', 'приход_ам_всего']
-
-    oborotka_nak = oborotka_nak[white_list_column]
-    oborotka_nak['клиентские_ам'] = oborotka_nak.apply(lambda x: last_day_period(result_svod_copy, x.год, x.месяц, x.регион, x.марка, 'ам_на_складе_клиент') , axis=1)
-    
-    oborotka_nak['своб_ам_без_дем_и_консиг'] = oborotka_nak.apply(lambda x: last_day_period(result_svod_copy, x.год, x.месяц, x.регион, x.марка, 'ам_на_складе_своб') 
-                                                        - last_day_period(result_svod_copy, x.год, x.месяц, x.регион, x.марка, 'склад_в_тч_демо_ам')
-                                                        - last_day_period(result_svod_copy, x.год, x.месяц, x.регион, x.марка, 'склад_конс_ам'), axis=1)
-    
-    oborotka_nak['конс_авто'] = oborotka_nak.apply(lambda x: last_day_period(result_svod_copy, x.год, x.месяц, x.регион, x.марка, 'склад_конс_ам'), axis=1)
-    oborotka_nak['обор_срва_всего_без_демо'] = oborotka_nak.apply(lambda x: last_day_period(result_svod_copy, x.год, x.месяц, x.регион, x.марка, 'оборот_средства_без_демо'), axis=1)
-    oborotka_nak['обор_срва_на_складе_без_демо'] = oborotka_nak.apply(lambda x: last_day_period(result_svod_copy, x.год, x.месяц, x.регион, x.марка, 'оборот_средства_без_демо_на_скл'), axis=1)
-    oborotka_nak['бонус'] = oborotka_nak.apply(lambda x: last_day_period_2(result_svod_copy, x.год, x.месяц, x.регион, x.марка, 'Бонус'), axis=1)
-    oborotka_nak['план'] = oborotka_nak.apply(lambda x: last_day_period_2(result_svod_copy, x.год, x.месяц, x.регион, x.марка, 'ПЛН'), axis=1)
-    oborotka_nak['дата'] = oborotka_nak.apply(lambda x: (f'{x.год}-{x.месяц}-01'), axis=1)
-    oborotka_nak['дата'] = pd.to_datetime(oborotka_nak['дата'])
-    oborotka_nak = oborotka_nak.drop(['год', 'месяц'], axis=1)
-except Exception as ex_:
-    print(ex_)
-    LOG_inf(f'запуск расчета краткой оборотки', 'ERROR', ex_)
-    
-
-# сохраняем средний склад
-LOG_inf(f'сохраняем средний склад', 'INFO')
+result_svod_copy_sr_sklad_sql = result_svod_copy_sr_sklad.copy()
+result_svod_copy_sr_sklad_sql = exception_column_SQL_replace(result_svod_copy_sr_sklad_sql)
+name_save_file_in_SQL = 'result_svod_copy_sr_sklad'
+logger.info(f'сохраняем средний склад в SQL под именем {name_save_file_in_SQL}')
 try:
-    result_svod_copy_sr_sklad.to_excel(links_main(fr"{script_dir}/file_links.txt", "result_svod_copy_sr_sklad"))
+    result_svod_copy_sr_sklad_sql = result_svod_copy_sr_sklad_sql.replace([np.inf, -np.inf], np.nan)
+    result_svod_copy_sr_sklad_sql.to_sql(name_save_file_in_SQL, con=connect_bd_SQL(), if_exists='replace', index=False)
+    logger.info(f'✅ значения np.inf заменены - бд сохранена в SQL под именем : {name_save_file_in_SQL}')
 except Exception as ex_:
-    print(ex_)
-    LOG_inf(f'сохраняем средний склад', 'ERROR', ex_)
-    
-# сохраняем оборотку накопительно
-LOG_inf(f'сохраняем оборотку накопительно', 'INFO')
-try:
-    oborotka_nak.to_excel(links_main(fr"{script_dir}/file_links.txt", "oborotka_nakopitelno"))
-except Exception as ex_:
-    print(ex_)
-    LOG_inf(f'сохраняем оборотку накопительно', 'ERROR', ex_)
+    logger.info(f'в данных {name_save_file_in_SQL} не обнаружено значений inf - пробуем запистаь данные в SQL')
+    try:
+        result_svod_copy_sr_sklad_sql.to_sql(name_save_file_in_SQL, con=connect_bd_SQL(), if_exists='replace', index=False)
+        logger.info(f'✅ бд сохранена в SQL под именем : {name_save_file_in_SQL}')
+    except:
+        # если будет ошибка запсукаем функцию проверки данных по столбцам
+        logger.error(f'❌ не удалось записать {name_save_file_in_SQL} в SQL запущена процедура поиска ошибок')
+        exception_column_SQL(result_svod_copy_sr_sklad_sql)
 
-# сохраняем оборотку
-LOG_inf(f'сохраняем оборотку', 'INFO')
-try:
-    result_svod.to_excel(links_main(fr"{script_dir}/file_links.txt", "save_sborka_oborotka"))
-except Exception as ex_:
-    print(ex_)
-    LOG_inf(f'сохраняем оборотку', 'ERROR', ex_)
- 
- 
-# собираем и сохраняем склады и np c новыми ключами и сохраняем, нужно Ж.Р.А.
 
-LOG_inf(f'собираем и сохраняем склады и np c новыми ключами и сохраняем, нужно Ж.Р.А.', 'INFO')
+
+oborotka_nak_sql = oborotka_nak.oborotka_nak.copy() # копируем фрейм из объекта класса
+oborotka_nak_sql = exception_column_SQL_replace(oborotka_nak_sql)
+name_save_file_in_SQL = 'oborotka_nakopitelno'
+logger.info(f'сохраняем оборотку накопительно в SQL {name_save_file_in_SQL}')
+try:
+    oborotka_nak_sql = oborotka_nak_sql.replace([np.inf, -np.inf], np.nan)
+    oborotka_nak_sql.to_sql(name_save_file_in_SQL, con=connect_bd_SQL(), if_exists='replace', index=False)
+    logger.info(f'✅ значения np.inf заменены - бд сохранена в SQL под именем : {name_save_file_in_SQL}')
+except Exception as ex_:
+    logger.info(f'в данных {name_save_file_in_SQL} не обнаружено значений inf - пробуем запистаь данные в SQL')
+    try:
+        oborotka_nak_sql.to_sql(name_save_file_in_SQL, con=connect_bd_SQL(), if_exists='replace', index=False)
+        logger.info(f'✅ бд сохранена в SQL под именем : {name_save_file_in_SQL}')
+    except:
+        # если будет ошибка запсукаем функцию проверки данных по столбцам
+        logger.error(f'❌ не удалось записать {name_save_file_in_SQL} в SQL запущена процедура поиска ошибок')
+        exception_column_SQL(oborotka_nak_sql)
+
+
+result_svod_sql = result_svod.copy()
+result_svod_sql = exception_column_SQL_replace(result_svod_sql) # заблаговременно ищем inf и справляем
+name_save_file_in_SQL = 'result_oborotka'
+logger.info(f'сохраняем оборотку накопительно в SQL под именем {name_save_file_in_SQL}')
+try:
+    result_svod_sql = result_svod_sql.replace([np.inf, -np.inf], np.nan)
+    result_svod_sql.to_sql(name_save_file_in_SQL, con=connect_bd_SQL(), if_exists='replace', index=False)
+    logger.info(f'✅ значения np.inf заменены - бд сохранена в SQL под именем : {name_save_file_in_SQL}')
+except Exception as ex_:
+    logger.info(f'в данных {name_save_file_in_SQL} не обнаружено значений inf - пробуем запистаь данные в SQL')
+    try:
+        result_svod_sql.to_sql(name_save_file_in_SQL, con=connect_bd_SQL(), if_exists='replace', index=False)
+        logger.info(f'✅ бд сохранена в SQL под именем : {name_save_file_in_SQL}')
+    except:
+        # если будет ошибка запсукаем функцию проверки данных по столбцам
+        logger.error(f'❌ не удалось записать {name_save_file_in_SQL} в SQL запущена процедура поиска ошибок')
+        exception_column_SQL(result_svod_sql)
+
+
+logger.info(f'собираем и сохраняем склады и np c новыми ключами и сохраняем, нужно Ж.Р.А.')
 try:
     all_skl = []
     all_np = []
@@ -3227,138 +3881,138 @@ try:
 
     result_sclad = pd.concat(all_skl)
     result_np_auto = pd.concat(all_np)
-    result_sclad.to_excel(links_main(fr"{script_dir}/file_links.txt", "save_sborka_sclad"))
-    result_np_auto.to_excel(links_main(fr"{script_dir}/file_links.txt", "save_sborka_np_auto"))
 except Exception as ex_:
-    print(ex_)
-    LOG_inf(f'собираем и сохраняем склады и np c новыми ключами и сохраняем, нужно Ж.Р.А.', 'ERROR', ex_)
-    
-    
-# обновление сводной таблицы
-LOG_inf(f'обновление сводной таблицы', 'INFO')
+    logger.error(f'собираем и сохраняем склады и np c новыми ключами и сохраняем, нужно Ж.Р.А. {ex_}')
+
+
+result_sclad_sql = result_sclad.copy()
+result_sclad_sql = exception_column_SQL_replace(result_sclad_sql)
+name_save_file_in_SQL = 'result_sclad'
+logger.info(f'сохраняем {name_save_file_in_SQL} в SQL')
 try:
-    update_file(links_main(fr"{script_dir}/file_links.txt", "update_file"))
+    result_sclad_sql = result_sclad_sql.replace([np.inf, -np.inf], np.nan)
+    result_sclad_sql.to_sql(name_save_file_in_SQL, con=connect_bd_SQL(), if_exists='replace', index=False)
+    logger.info(f'✅ значения np.inf заменены - бд сохранена в SQL под именем : {name_save_file_in_SQL}')
 except Exception as ex_:
-    print(ex_)
-    LOG_inf(f'обновление сводной таблицы', 'ERROR', ex_)
-    
-    
-# обновление сводной таблицы
-LOG_inf(f'обновление сводной таблицы 2', 'INFO')
+    logger.info(f'в данных {name_save_file_in_SQL} не обнаружено значений inf - пробуем запистаь данные в SQL')
+    try:
+        result_sclad_sql.to_sql(name_save_file_in_SQL, con=connect_bd_SQL(), if_exists='replace', index=False)
+        logger.info(f'✅ бд сохранена в SQL под именем : {name_save_file_in_SQL}')
+    except Exception as ex_:
+        logger.error(f'❌ не удалось записать {name_save_file_in_SQL} в SQL запущена процедура поиска ошибок')
+        exception_column_SQL(result_sclad_sql)
+
+
+result_np_auto_sql = result_np_auto.copy()
+result_np_auto_sql = exception_column_SQL_replace(result_np_auto_sql)
+name_save_file_in_SQL = 'result_np_auto'
+logger.info(f'сохраняем {name_save_file_in_SQL} в SQL')
 try:
-    update_file(links_main(fr"{script_dir}/file_links.txt", "update_file_2"))
+    result_np_auto_sql = result_np_auto_sql.replace([np.inf, -np.inf], np.nan)
+    result_np_auto_sql.to_sql(name_save_file_in_SQL, con=connect_bd_SQL(), if_exists='replace', index=False)
+    logger.info(f'✅ значения np.inf заменены - бд сохранена в SQL под именем : {name_save_file_in_SQL}')
 except Exception as ex_:
-    print(ex_)
-    LOG_inf(f'обновление сводной таблицы 2', 'ERROR', ex_)
-    
-    
-# БЛОК РАССЫЛКИ СООБЩЕНИЙ С ОШИБКАМИ ПО ДАННЫМ
+    logger.info(f'в данных {name_save_file_in_SQL} не обнаружено значений inf - пробуем запистаь данные в SQL')
+    try:
+        result_np_auto_sql.to_sql(name_save_file_in_SQL, con=connect_bd_SQL(), if_exists='replace', index=False)
+        logger.info(f'✅ бд сохранена в SQL под именем : {name_save_file_in_SQL}')
+    except Exception as ex_:
+        logger.error(f'❌ не удалось записать {name_save_file_in_SQL} в SQL запущена процедура поиска ошибок')
+        exception_column_SQL(result_np_auto_sql)
+
+
+logger.info(f'создаем пустой фрейм и записываем в книгу для считывания метаданных')
+try:
+    df_time = pd.DataFrame()
+    df_time.to_excel(links_main(fr"{DIR}\file_links.txt", "time_book"))
+except Exception as ex_:
+    logger.error(f'не удалось создать пустой фрейм {ex_}')
+
+# обновление сводной таблицы
+logger.info(f'обновление сводной таблицы 2 - то есть основной оборотки')
+try:
+    update_file(links_main(fr"{DIR}\file_links.txt", "update_file_2"))
+except Exception as ex_:
+    logger.error(f'обновление сводной таблицы {ex_}')
+
 
 # считываем фрейм с адресами почты и связью файлов для рассылки
-LOG_inf(f'считывание фрейма для рассылки сообщений с ошибками', 'INFO')
+logger.info(f'считывание фрейма для рассылки сообщений с ошибками')
 try:
-    df_emal_exception = pd.read_excel(links_main(fr"{script_dir}/file_links.txt", "email_exception"))
+    df_emal_exception = pd.read_excel(links_main(fr"{DIR}\file_links.txt", "email_exception"), engine='calamine')
     df_emal_exception
 except Exception as ex_:
-    print(ex_)
-    LOG_inf(f'считывание фрейма для рассылки сообщений с ошибками', 'ERROR', ex_)
-    
-# получаем список уникальных объектов рассылки
-unique_name_object_email = df_emal_exception['object'].unique() # список уникальных имен объектов
+    logger.error(f'считывание фрейма для рассылки сообщений с ошибками')
+
+logger.info('Получение списка адресатов')
+try:
+    unique_name_object_email = df_emal_exception['object'].unique() # список уникальных имен объектов
+except Exception as e:
+    logger.error(f'Ошибка при формировании списка email: {e}')
 
 
-# перебираем уникальные элементы объектов с собранными ошибками и получаем адреса ответственных лиц
-LOG_inf(f'рассылаем сообщения с ошибками', 'INFO')
+logger.info(f'рассылаем сообщения с ошибками')
 
 try:
-    status_email_flag = True
+    status_email_flag = RUN_EXCEPT_GO_EMAIL
     pause_sleep = 15
     if status_email_flag:
         for i in unique_name_object_email:
             name = i                                                            # получаем имя объекта
             email_adress_go = return_email_except_df(name, 'object', 'email')   # получаем email
             link = return_link_directory(name ,'save_file_exception')           # получаем ссылку на файл
-            df = pd.read_excel(link)                                            # считываем фрейм
+            df = pd.read_excel(link, engine='calamine')                         # считываем фрейм
             count_srok = df.shape[0]                                            # считываем параметры табл строки/столб
             if count_srok>=1:                                                   # если строк больше 1
                 try:
-                    print(email_adress_go, link, name)
-                    LOG_inf(f'{email_adress_go, link, name}', 'INFO')
-                    send_mail(email_adress_go, link, name)                          # отправляем почту
+                    logger.info(f'{email_adress_go, link, name}')
+                    send_mail(email_adress_go, link, name)  # отправляем почту
                     time.sleep(pause_sleep)                                         # без задержки вылетает ошибка отправки почты менее 15 сек
                 except Exception as ex_:
-                    print(f'ошибка рассылки сообщений {ex_} параметры {email_adress_go, link, name}')
-                    LOG_inf(f'рассылаем сообщения с ошибками {email_adress_go, link, name}', 'ERROR', ex_)
+                    logger.error(f'рассылаем сообщения с ошибками {email_adress_go, link, name} {ex_}')
 
 except Exception as ex_:
-    print(ex_)
-    LOG_inf(f'рассылаем сообщения с ошибками', 'ERROR', ex_)   
-    
-    
-# СРАВНЕНИЕ СКЛАДА ТЕКУЩЕГО С АРХИВНЫМ
+    logger.error(f'ошибка блока отправки сообщений с ошибками {ex_}')  
 
-LOG_inf(f'сборка результатов сравнения склада архивного и текущего', 'INFO')
-
+logger.info(f'Пророверка обновления сводной таблицы 2')
 try:
-    sborka_df = []
-    for i in catalog_df_oborotka.keys():
+    test_udate_file_svod_tab = file_update(links_main(fr'{DIR}\file_links.txt', 'update_file_2')) # получааем метаданные сводной таблицы
+    result_updatefile_true_or_false = test_udate_file_svod_tab>yesterday(1)
+    logger.info(f'Метаданные сводной таблицы 2 {test_udate_file_svod_tab} обновлена {result_updatefile_true_or_false}')
+except Exception as ex_:
+    logger.error(f'Пророверка обновления сводной таблицы 2 {ex_}')
 
+#НЕ ЗАБЫВАЕМ ПРО ДИРРЕКТОРИЮ
+
+#НЕ ЗАБЫВАЕМ ПРО ДИРРЕКТОРИЮ
+
+logger.info(f'Копирование сводной таблицы 2 (в норку)')
+if result_updatefile_true_or_false:
+    try:
+        # копирование общей оборотки в папку
+        shutil.copy2(links_main(fr'{DIR}\file_links.txt', 'update_file_2'), 
+                    links_main(fr'{DIR}\file_links.txt', 'copy_oborotka'))
+        name_file_save = links_main(fr'{DIR}\file_links.txt', 'copy_oborotka')
+        logger.info(f'Копирование сводной таблицы 2 (в норку) - скопировано  под именем {name_file_save}')
+    except Exception as ex_:
+        # копирование общей оборотки в папку в случае если файл открыт, сохраняет копию с нижним подчеркиванием
         try:
-            print(i)
-            df_skl_arh = copy.deepcopy(read_file_arhiv(i, 'sclad', "paste_link_dir"))  # архивный склад
-            df_skl = copy.deepcopy(catalog_df_oborotka[i].df_sclad)                    # текущий склад
-            df_skl_arh = df_skl_arh.fillna(0)
-            df_skl = df_skl.fillna(0)
-            for col in df_skl.columns:
-                df_skl[col] = df_skl[col].apply(lambda x: 0 if str(x) in ['nan'] else x)
-            df_skl_arh['сравнение'] = df_skl_arh.apply(lambda x: (sravnenie_arh_skl_k_tek(x.vin, df_skl_arh, df_skl)), axis=1)
-            df_skl_arh = df_skl_arh[['vin','сравнение']]
-            df_skl_arh['сравнение'] = df_skl_arh['сравнение'].apply(lambda x: 'удалить' if len(str(x))<=3 else x)
-            df_skl_arh = df_skl_arh[~df_skl_arh['сравнение'].str.contains("|".join(['удалить', 'не удалось найти 0', ' было 0 стало nan', 'vin 0 есть но данных нет']), case=False, na=False)] #'не удалось найти 0'
-            df_skl_arh['объект'] = i
-            df_skl_arh['дата'] = tek_day()
-            df_skl_arh['пропал_vin'] = df_skl_arh.apply(lambda x: (x.vin if 'не удалось найти' in str(x.сравнение) else None), axis=1)
-            sborka_df.append(df_skl_arh) # добавляем фрейм
-            
-        except Exception as ex_:
-            print(f'ошибка - Не удалось сранвить {i}')
-            LOG_inf(f'ошибка - Не удалось сранвить {i}', 'ERROR', ex_)
-            
-            
-    df_sravn_arh = pd.read_excel(links_main(fr"{script_dir}/file_links.txt", "sravnrnie_sclada"))      # считываем передыдущие результаты
-    sborka_df.append(df_sravn_arh)
-    result_sravnenie_sclada = pd.concat(sborka_df)                                      # объединяем все данные
-    result_sravnenie_sclada = result_sravnenie_sclada[[i for i in result_sravnenie_sclada.columns if 'Unnamed: 0' not in i]]
-    result_sravnenie_sclada.to_excel(links_main(fr"{script_dir}/file_links.txt", "sravnrnie_sclada"))  # сохраняем результат
-    
-except Exception as ex_:
-    print(ex_)
-    LOG_inf(f'сборка результатов сравнения склада архивного и текущего', 'ERROR', ex_)  
-    
-    
-LOG_inf(f'Пророверка обновления сводной таблицы', 'INFO')
-try:
-    test_udate_file_svod_tab = file_update(links_main(fr"{script_dir}/file_links.txt", 'update_file')) # получааем метаданные сводной таблицы
-    result_updatefile_true_or_false = test_udate_file_svod_tab>yesterday(1)
-    LOG_inf(f'Метаданные сводной таблицы {test_udate_file_svod_tab} обновлена {result_updatefile_true_or_false}', 'INFO')
-except Exception as ex_:
-    print(ex_)
-    LOG_inf(f'Пророверка обновления сводной таблицы', 'ERROR', ex_)
-    
-    
-LOG_inf(f'Пророверка обновления сводной таблицы 2', 'INFO')
-try:
-    test_udate_file_svod_tab = file_update(links_main(fr"{script_dir}/file_links.txt", 'update_file_2')) # получааем метаданные сводной таблицы
-    result_updatefile_true_or_false = test_udate_file_svod_tab>yesterday(1)
-    LOG_inf(f'Метаданные сводной таблицы 2 {test_udate_file_svod_tab} обновлена {result_updatefile_true_or_false}', 'INFO')
-except Exception as ex_:
-    print(ex_)
-    LOG_inf(f'Пророверка обновления сводной таблицы 2', 'ERROR', ex_)
-    
-    
+            shutil.copy2(links_main(fr'{DIR}\file_links.txt', 'update_file_2'), 
+                        links_main(fr'{DIR}\file_links.txt', 'copy_oborotka_2'))
+            name_file_save = links_main(fr'{DIR}\file_links.txt', 'copy_oborotka_2')
+            logger.info(f'Копирование сводной таблицы 2 (в норку) - скопировано со второй попытки под именем {name_file_save}')
+        except Exception as ex_2:
+            logger.error(f'Копирование сводной таблицы 2 (в норку) - не удалось со второй потыки')
+
+        logger.info(f'Копирование сводной таблицы 2 (в норку) - не удалось с первой потыки')
+else:
+    logger.error(f'Копирование сводной таблицы 2 (в норку) - НЕ ОСУЩЕСТВЛЕНО так как она не была обнавлена {result_updatefile_true_or_false}')
+
 # отпрака результатов логирования
-send_mail_2(['skrutko@sim-auto.ru', 'zhurin@sim-auto.ru', 'qwertyz19861@gmail.com'], 
-            links_main(fr"{script_dir}/file_links.txt", 'log'), 
-            'log.log', 
+logger.info(f'запуск отправки почты')
+
+send_mail_2(['skrutko@sim-auto.ru', 'qwertyz19861@gmail.com', 'zhurin@sim-auto.ru'], # 'skrutko@sim-auto.ru', 'zhurin@sim-auto.ru', 'qwertyz19861@gmail.com'
+            links_main(fr'{DIR}\file_links.txt', 'log'), 
+            os.path.basename(links_main(fr'{DIR}\file_links.txt', 'log')), 
             them = 'ОБОРОТКА',
             body='Результат отработки скрипта по оборотке ')
